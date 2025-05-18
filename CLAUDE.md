@@ -26,6 +26,11 @@ When using an edit tool that requires an `old_string` to match existing file con
 6.  **Strategies for Complex or Failing Multi-line Edits**:
     *   **Verify with Single-Line Edits**: If a multi-line `Edit` repeatedly fails despite careful `old_string` construction, attempt to modify a *single, simple line* within the target block with minimal context. Success here confirms basic editability and points to subtle issues in the larger `old_string`. The file content *after* this small successful edit becomes the new baseline for subsequent `old_string` constructions.
     *   **Use `MultiEdit` for Staged Changes**: For complex transformations or when direct `Edit` of a large block is problematic, consider using the `MultiEdit` tool. Break down the overall change into a sequence of smaller, atomic edits. Each step in `MultiEdit` operates on the result of the previous one. This can be more robust for intricate modifications or when dealing with code that has many special characters or complex indentation. Ensure each `old_string` in the sequence precisely matches the expected state of the code after the preceding edit in the `MultiEdit` chain.
+    *   **Anchor on a Known Good Line for Insertions**: If inserting multiple lines of new code, and direct multi-line replacements or `MultiEdit` prove difficult (especially around lines with tricky whitespace), try this:
+        1.  Identify a single, stable line immediately *before* your desired insertion point. This "anchor line" should ideally be simple and have successfully matched in previous `Read` or `Edit` operations.
+        2.  Construct `old_string` to be *only* this anchor line (including its exact whitespace and newline).
+        3.  Construct `new_string` to be the anchor line (unchanged) *followed by* your new block of code.
+        4.  This effectively replaces the anchor line with itself plus the new code, inserting the new code immediately after the anchor line. This can bypass issues with matching complex multi-line structures or problematic lines that would have been part of a larger `old_string`.
 
 By adhering to these principles, particularly the exclusion of read-tool artifacts and the exact replication of file content and whitespace, the reliability of string replacement edits can be significantly improved.
 
