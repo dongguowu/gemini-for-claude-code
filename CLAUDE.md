@@ -23,6 +23,10 @@ When using an edit tool that requires an `old_string` to match existing file con
     *   Using stale file content to construct `old_string`.
     *   Including read-tool artifacts (like line numbers) in `old_string`.
 
+6.  **Strategies for Complex or Failing Multi-line Edits**:
+    *   **Verify with Single-Line Edits**: If a multi-line `Edit` repeatedly fails despite careful `old_string` construction, attempt to modify a *single, simple line* within the target block with minimal context. Success here confirms basic editability and points to subtle issues in the larger `old_string`. The file content *after* this small successful edit becomes the new baseline for subsequent `old_string` constructions.
+    *   **Use `MultiEdit` for Staged Changes**: For complex transformations or when direct `Edit` of a large block is problematic, consider using the `MultiEdit` tool. Break down the overall change into a sequence of smaller, atomic edits. Each step in `MultiEdit` operates on the result of the previous one. This can be more robust for intricate modifications or when dealing with code that has many special characters or complex indentation. Ensure each `old_string` in the sequence precisely matches the expected state of the code after the preceding edit in the `MultiEdit` chain.
+
 By adhering to these principles, particularly the exclusion of read-tool artifacts and the exact replication of file content and whitespace, the reliability of string replacement edits can be significantly improved.
 
 # Commit Messages
