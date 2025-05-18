@@ -31,4 +31,4 @@ When generating commit messages, do not include the `Co-Authored-By: Claude <nor
 
 # Interaction Note
 
-When providing code modifications or suggesting edits, Claude Code will directly apply these changes using its available tools rather than asking the user to manually implement them. If a change is proposed, it will be accompanied by the tool usage that performs the edit. This ensures a more efficient workflow.
+When providing code modifications or suggesting edits, directly apply these changes using the available tools rather than asking the user to manually implement them. If a change is proposed, it will be accompanied by the tool usage that performs the edit. This ensures a more efficient workflow.
