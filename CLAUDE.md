@@ -28,3 +28,7 @@ By adhering to these principles, particularly the exclusion of read-tool artifac
 # Commit Messages
 
 When generating commit messages, do not include the `Co-Authored-By: Claude <noreply@anthropic.com>` line or the `🤖 Generated with [Claude Code](https://claude.ai/code)` line.
+
+# Interaction Note
+
+When providing code modifications or suggesting edits, Claude Code will directly apply these changes using its available tools rather than asking the user to manually implement them. If a change is proposed, it will be accompanied by the tool usage that performs the edit. This ensures a more efficient workflow.
