@@ -2,7 +2,7 @@
 
 This server acts as a bridge, allowing you to use Anthropic-compatible clients (like Claude Code) with Google's Gemini models. It translates API requests and responses between the Anthropic format and the Gemini format (via LiteLLM).
 
-![Anthropic API Proxy](picture.jpg)
+![Anthropic API Proxy](image.png)
 
 ## Features
 
