@@ -70,7 +70,7 @@ This server acts as a bridge, allowing you to use Anthropic-compatible clients (
 1.  Ensure Claude Code CLI is installed (`npm install -g @anthropic-ai/claude-code`).
 2.  Point the Claude Code client to your running proxy server:
     ```bash
-    ANTHROPIC_BASE_URL=http://localhost:8082 claude [your_prompt_or_command]
+    ANTHROPIC_BASE_URL=http://localhost:8082 claude
     ```
     Now, Claude Code will send its requests to your local Gemini Code server, which will then interact with Gemini.
 
