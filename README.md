@@ -107,4 +107,4 @@ Contributions are welcome! Please feel free to submit issues or pull requests.
 
 ## Thanks
 
-Special thanks to https://github.com/1rgs/claude-code-proxy for inspiration and original code
+Special thanks to https://github.com/1rgs/claude-code-proxy for inspiration and original code.
