@@ -2,11 +2,13 @@
 
 When using an edit tool that requires an `old_string` to match existing file content before replacing it with a `new_string`, precision is critical. Follow these general steps to maximize the likelihood of a successful edit and avoid "String to replace not found" errors:
 
+> **Note:** To confirm changes after an edit, prefer reading a specific section of the file using `offset` and `limit` parameters with the `Read` tool, rather than reading the entire file. The success of the `Edit` or `MultiEdit` tool (especially with `expected_replacements`) is the primary confirmation the change was made.
+
 1.  **Refresh File Content**: Always read the target file immediately before attempting an edit. This ensures you are working with the absolute latest version of the file, minimizing discrepancies caused by prior (potentially unseen or forgotten) modifications.
 
 2.  **Exact `old_string` Construction**:
     *   Carefully copy the segment of text you intend to replace (`old_string`) directly from the fresh output of your file read operation.
-    *   **Crucial**: Ensure that any metadata added by the read tool (e.g., line numbers, leading tabs for formatting the read output) is *excluded* from the `old_string`. The `old_string` must only contain the actual characters present in the file itself.
+    *   **Crucial**: Ensure that any metadata or formatting artifacts introduced by the `Read` tool's output (e.g., `cat -n` style line numbers, leading tabs added for display purposes that are not actually in the file) are *explicitly excluded* from the `old_string` parameter provided to an `Edit` or `MultiEdit` tool. The `old_string` must *only* contain the literal characters and whitespace exactly as they exist in the raw file content. If an `Edit` fails, double-check that the `old_string` wasn't inadvertently constructed using the formatted `Read` output instead of the true file content (re-reading a small, specific segment can help confirm the actual characters).
     *   Pay meticulous attention to all whitespace, including spaces, tabs, and newline characters. These must exactly match the file content.
     *   Hidden or non-rendering characters can also cause mismatches. Be wary if copying from sources that might introduce them.
 
@@ -33,6 +35,8 @@ When using an edit tool that requires an `old_string` to match existing file con
         4.  This effectively replaces the anchor line with itself plus the new code, inserting the new code immediately after the anchor line. This can bypass issues with matching complex multi-line structures or problematic lines that would have been part of a larger `old_string`.
 
 By adhering to these principles, particularly the exclusion of read-tool artifacts and the exact replication of file content and whitespace, the reliability of string replacement edits can be significantly improved.
+
+> **Tip:** The `MultiEdit` tool, when used in conjunction with the best practices outlined in this document (especially regarding exact `old_string` matching and sequential application of changes), is often the most reliable method for performing multiple modifications to a file.
 
 # Commit Messages
 
