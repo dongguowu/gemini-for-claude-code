@@ -45,6 +45,49 @@ Precision is key for successful file edits. The following strategies lead to rel
     *   The success confirmation from the `Edit` or `MultiEdit` tool (especially if `expected_replacements` is used and matches) is the primary indicator that the change was made.
     *   If further visual confirmation is needed, use the `Read` tool with `offset` and `limit` parameters to view only the specific section of the file that was changed, rather than re-reading the entire file.
 
+## Handling Large Files for Incremental Refactoring
+
+When refactoring large files incrementally rather than rewriting them completely:
+
+1. **Initial Exploration and Planning**:
+   * Begin with targeted searches using `Grep` to locate specific patterns or sections within the file.
+   * Use `Bash` commands like `grep -n "pattern" file` to find line numbers for specific areas of interest.
+   * Create a clear mental model of the file structure before proceeding with edits.
+
+2. **Chunked Reading for Large Files**:
+   * For files too large to read at once, use multiple `Read` operations with different `offset` and `limit` parameters.
+   * Read sequential chunks to build a complete understanding of the file.
+   * Use `Grep` to pinpoint key sections, then read just those sections with targeted `offset` parameters.
+
+3. **Finding Key Implementation Sections**:
+   * Use `Bash` commands with `grep -A N` (to show N lines after a match) or `grep -B N` (to show N lines before) to locate function or method implementations.
+   * Example: `grep -n "function findTagBoundaries" -A 20 filename.js` to see the first 20 lines of a function.
+
+4. **Pattern-Based Replacement Strategy**:
+   * Identify common patterns that need to be replaced across the file.
+   * Use the `Bash` tool with `sed` for quick previews of potential replacements.
+   * Example: `sed -n "s/oldPattern/newPattern/gp" filename.js` to preview changes without making them.
+
+5. **Sequential Selective Edits**:
+   * Target specific sections or patterns one at a time rather than attempting a complete rewrite.
+   * Focus on clearest/simplest cases first to establish a pattern of successful edits.
+   * Use `Edit` for well-defined single changes within the file.
+
+6. **Batch Similar Changes Together**:
+   * Group similar types of changes (e.g., all references to a particular function or variable).
+   * Use `Bash` with `sed` to preview the scope of batch changes: `grep -n "pattern" filename.js | wc -l`
+   * For systematic changes across a file, consider using `sed` through the `Bash` tool: `sed -i "s/oldPattern/newPattern/g" filename.js`
+
+7. **Incremental Verification**:
+   * After each set of changes, verify the specific sections that were modified.
+   * For critical components, read the surrounding context to ensure the changes integrate correctly.
+   * Validate that each change maintains the file's structure and logic before proceeding to the next.
+
+8. **Progress Tracking for Large Refactors**:
+   * Use the `TodoWrite` tool to track which sections or patterns have been updated.
+   * Create a checklist of all required changes and mark them off as they're completed.
+   * Record any sections that require special attention or that couldn't be automatically refactored.
+
 ## Commit Messages
 
 When Claude Code generates commit messages on your behalf:
