@@ -78,15 +78,54 @@ The general workflow for tasks:
 
 ### File Editing
 
-1. **Pre-Edit Read**: Always read immediately before editing to ensure latest content.
-2. **Exact Matching**: Make old_string an exact match including whitespace and special characters.
-3. **No Read Artifacts**: Exclude line numbers or display formatting from strings.
-4. **Context Inclusion**: Include sufficient surrounding context for uniqueness.
-5. **Tool Selection**:
-   - Use Edit for single replacements
-   - Use MultiEdit for multiple changes in one file
-   - Use Write for complete file replacement
-6. **Verification**: Confirm edits with tool success messages and targeted reads.
+1.  **Pre-Edit Read**: Always read immediately before editing to ensure latest content.
+2.  **Exact Matching**: Make old_string an exact match including whitespace and special characters.
+3.  **No Read Artifacts**: Exclude line numbers or display formatting from strings.
+4.  **Context Inclusion**: Include sufficient surrounding context for uniqueness.
+5.  **Tool Selection**:
+    *   Use Edit for single replacements
+    *   Use MultiEdit for multiple changes in one file
+    *   Use Write for complete file replacement
+6.  **Verification**: Confirm edits with tool success messages and targeted reads.
+
+### Complex Refactoring and Edit Strategies
+
+When faced with complex refactoring tasks that involve multiple changes across a file, or changes to large blocks of code, adhere to the following strategy:
+
+1.  **Initial Assessment and Planning**:
+    *   Use `TodoWrite` to break down the complex refactoring task into smaller, manageable steps.
+    *   Identify distinct blocks of code to be removed or heavily modified, and individual call sites or patterns to be updated.
+
+2.  **Attempt Simple Edits First**:
+    *   For removing clearly defined, contiguous blocks of code (e.g., entire class or function definitions), attempt to use the `Edit` tool.
+        *   Use `Read` with `limit` and `offset` to get the exact `old_string` for the block.
+        *   Ensure the `old_string` is an exact match, including all whitespace, newlines, and special characters. Be extremely careful with escaping characters in the `old_string` for the tool call.
+    *   For updating multiple, specific, and identical small patterns (e.g., renaming a variable in several places within a function, updating import statements), attempt to use `MultiEdit` by providing a list of `MultieditEdits` objects.
+        *   Each `old_string` must be precise and unique enough or use `expected_replacements` if the pattern is not unique.
+        *   If `MultiEdit` proves difficult to construct correctly for many varied small changes, consider using multiple `Edit` calls or escalating to the `Task` tool.
+
+3.  **Escalation to `Task` Tool (Agent)**:
+    *   If `Edit` or `MultiEdit` fails repeatedly for large block removals or numerous small, varied changes (e.g., due to difficulties in exact string matching, escaping special characters, or managing sequential dependencies of edits), **DO NOT** resort to the `Write` tool for the entire file if the changes are not a full rewrite.
+    *   Instead, **escalate to the `Task` tool**. Provide the agent with:
+        *   The specific file path.
+        *   A clear, itemized list of changes to be made (similar to the plan from step 1). This includes:
+            *   Exact definitions or line ranges (if stable) for large code blocks to be removed.
+            *   Specific patterns for find-and-replace operations for call sites.
+            *   Detailed instructions for any logic modifications.
+        *   Instruct the agent to perform the changes sequentially and carefully, ensuring the final code is valid.
+    *   The `Task` tool is better equipped to handle the internal complexities of sequential editing, string matching with special characters, and ensuring a valid final state for complex refactoring.
+
+4.  **`Write` Tool as a Last Resort for Full Rewrites**:
+    *   The `Write` tool should generally be reserved for situations where you are generating an entirely new file or completely rewriting the majority of an existing file from scratch, based on a high-level specification.
+    *   **Avoid using `Write` for targeted refactoring of existing code** if the goal is to preserve most of the original file structure and make specific modifications. This is because constructing the entire new file content manually by modifying a previous `Read` output is error-prone for complex changes.
+
+5.  **Verification**:
+    *   After any edit operation (whether by `Edit`, `MultiEdit`, or `Task`), verify the changes by:
+        *   Reading the relevant sections of the modified file using the `Read` tool.
+        *   If possible and applicable, instruct the `Task` tool to run linters or tests.
+    *   Ensure that all planned modifications have been correctly applied and the code remains functional and correct.
+
+By following this structured approach, focusing on the appropriate tool for the complexity at hand, and escalating to the `Task` tool for intricate refactoring rather than misusing `Write` or struggling with `Edit`/`MultiEdit` on overly complex inputs, we can improve reliability and reduce errors.
 
 ### Bash Commands
 
