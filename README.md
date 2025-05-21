@@ -78,6 +78,18 @@ This server acts as a bridge, allowing you to use Anthropic-compatible clients (
     ```
     Select the option to disable history compacting when prompted. This ensures proper handling of context between the client and proxy.
 
+4.  **Utilizing the CLAUDE.md file**:
+    - The repository includes a `CLAUDE.md` file to improve Gemini's performance with Claude Code tooling.
+    - Copy this file to any project directory where you'll be using Claude Code:
+      ```bash
+      cp /path/to/gemini-code/CLAUDE.md /your/project/directory/
+      ```
+    - When starting a new conversation with Claude Code in that directory, begin with:
+      ```
+      first things first, read CLAUDE.md with intent. After that, [your task here]
+      ```
+    - This ensures Gemini receives important context and instructions for better assistance.
+
 ## How It Works
 
 1.  The proxy receives an API request formatted for Anthropic's Messages API.
@@ -104,6 +116,18 @@ The server maintains a list of known Gemini models and attempts to prefix `gemin
 ## Logging
 
 The server provides detailed logging, including colorized output for model mappings and request processing, to help with debugging and monitoring.
+
+## Additional Files
+
+### CLAUDE.md
+
+The repository includes a special `CLAUDE.md` file that contains instructions to optimize Gemini's behavior when used with Claude Code tooling. This file is designed to:
+
+- Help Gemini better understand how to respond to Claude Code commands
+- Improve code generation and project understanding
+- Enhance tool-using capabilities
+
+The file needs to be present in any directory where you run Claude Code, as Claude Code automatically reads from a `CLAUDE.md` file in the current working directory.
 
 ## Contributing
 
