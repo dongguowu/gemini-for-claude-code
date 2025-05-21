@@ -72,9 +72,11 @@ This server acts as a bridge, allowing you to use Anthropic-compatible clients (
     ```bash
     ANTHROPIC_BASE_URL=http://localhost:8082 claude
     ```
-    Now, Claude Code will send its requests to your local Gemini Code server, which will then interact with Gemini.
-
-    NOTE: disable conversation history compacting with /config command
+3.  For optimal performance, disable conversation history compacting after starting Claude Code:
+    ```
+    /config
+    ```
+    Select the option to disable history compacting when prompted. This ensures proper handling of context between the client and proxy.
 
 ## How It Works
 
