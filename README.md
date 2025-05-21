@@ -74,6 +74,8 @@ This server acts as a bridge, allowing you to use Anthropic-compatible clients (
     ```
     Now, Claude Code will send its requests to your local Gemini Code server, which will then interact with Gemini.
 
+    NOTE: disable conversation history compacting with /config command
+
 ## How It Works
 
 1.  The proxy receives an API request formatted for Anthropic's Messages API.
