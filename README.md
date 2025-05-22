@@ -84,9 +84,9 @@ This server acts as a bridge, allowing you to use Anthropic-compatible clients (
       ```bash
       cp /path/to/gemini-code/CLAUDE.md /your/project/directory/
       ```
-    - OPTIONAL: When starting a new conversation with Claude Code in that directory, begin with:
+    - When starting a new conversation with Claude Code in that directory, begin with:
       ```
-      first things first, read CLAUDE.md with intent. After that, [your task here]
+      Read CLAUDE.md with intent and process it. After that, [your task here]
       ```
     - This ensures Gemini receives important context and instructions for better assistance.
 
