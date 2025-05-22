@@ -86,7 +86,7 @@ This server acts as a bridge, allowing you to use Anthropic-compatible clients (
       ```
     - When starting a new conversation with Claude Code in that directory, begin with:
       ```
-      Read CLAUDE.md with intent and process it. After that, [your task here]
+      First read and process CLAUDE.md with intent. After understanding and agreeing to use the policies and practices outlined in the document, respond with YES
       ```
     - This ensures Gemini receives important context and instructions for better assistance.
 
