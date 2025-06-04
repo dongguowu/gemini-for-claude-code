@@ -78,7 +78,7 @@ This server acts as a bridge, enabling you to use **Claude Code** with Google's 
     MAX_TOKENS_LIMIT="8192"           # Max tokens for Gemini responses
     REQUEST_TIMEOUT="90"              # Request timeout in seconds
     MAX_RETRIES="2"                   # LiteLLM retries to Gemini
-    MAX_STREAMING_RETRIES="3"         # Streaming-specific retry attempts
+    MAX_STREAMING_RETRIES="12"         # Streaming-specific retry attempts
     
     # Optional: Streaming control (use if experiencing issues)
     FORCE_DISABLE_STREAMING="false"     # Disable streaming globally
