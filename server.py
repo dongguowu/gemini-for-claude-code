@@ -552,7 +552,7 @@ def convert_anthropic_to_litellm(anthropic_request: MessagesRequest) -> Dict[str
             # Some APIs prefer missing field vs null vs empty string
             if content_parts:
                 assistant_msg["content"] = content_parts[0]["text"] if len(content_parts) == 1 and content_parts[0]["type"] == Constants.CONTENT_TEXT else content_parts
-            # Removed: else: assistant_msg["content"] = None
+            else: assistant_msg["content"] = None
                 
             if tool_calls:
                 assistant_msg["tool_calls"] = tool_calls
