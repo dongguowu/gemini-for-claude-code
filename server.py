@@ -814,7 +814,7 @@ async def handle_streaming_with_recovery(response_generator, original_request: M
             try:
                 # Get next chunk with timeout
                 try:
-                    chunk = await asyncio.wait_for(anext(stream_iterator), timeout=30.0)
+                    chunk = await asyncio.wait_for(anext(stream_iterator), timeout=90.0)
                 except StopAsyncIteration:
                     break
                 except asyncio.TimeoutError:
