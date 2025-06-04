@@ -9,11 +9,26 @@ This server acts as a bridge, enabling you to use **Claude Code** with Google's 
 - **Claude Code Compatibility with Gemini**: Directly use the Claude Code CLI with Google Gemini models.
 - **Seamless Model Mapping**: Intelligently maps Claude Code model requests (e.g., `haiku`, `sonnet`, `opus` aliases) to your chosen Gemini models.
 - **LiteLLM Integration**: Leverages LiteLLM for robust and flexible interaction with the Gemini API.
-- **Full Streaming Support**: Handles streaming responses from Gemini for an interactive Claude Code experience, with improved error handling for streaming issues.
+- **Enhanced Streaming Support**: Handles streaming responses from Gemini with robust error recovery for malformed chunks and API errors.
 - **Complete Tool Use for Claude Code**: Translates Claude Code's tool usage (function calling) to and from Gemini's format, with robust handling of tool results.
-- **Enhanced Error Handling**: Provides more specific and actionable error messages for common Gemini API issues.
+- **Advanced Error Handling**: Provides specific and actionable error messages for common Gemini API issues with automatic fallback strategies.
+- **Resilient Architecture**: Gracefully handles Gemini API instability with smart retry logic and fallback to non-streaming modes.
 - **Diagnostic Endpoints**: Includes `/health` and `/test-connection` for easier troubleshooting of your setup.
 - **Token Counting**: Offers a `/v1/messages/count_tokens` endpoint compatible with Claude Code.
+
+## Recent Improvements (v2.5.0)
+
+### 🛡️ Enhanced Error Resilience
+- **Malformed Chunk Recovery**: Automatically detects and handles malformed JSON chunks from Gemini streaming
+- **Smart Retry Logic**: Exponential backoff with configurable retry limits for streaming errors
+- **Graceful Fallback**: Seamlessly switches to non-streaming mode when streaming fails
+- **Buffer Management**: Intelligent chunk buffering and reconstruction for incomplete JSON
+- **Connection Stability**: Handles Gemini 500 Internal Server Errors with automatic retry
+
+### 📊 Improved Monitoring
+- **Detailed Error Classification**: Specific guidance for different types of Gemini API errors
+- **Enhanced Logging**: Comprehensive error tracking with malformed chunk statistics
+- **Real-time Status**: Better health checks and connection testing
 
 ## Prerequisites
 
@@ -47,21 +62,28 @@ This server acts as a bridge, enabling you to use **Claude Code** with Google's 
     ```
     Edit `.env` and add your Gemini API key. You can also customize model mappings and server settings:
     ```dotenv
-    GEMINI_API_KEY="your-google-ai-studio-key" # Required
+    # Required: Your Google AI Studio API key
+    GEMINI_API_KEY="your-google-ai-studio-key"
 
-    # Optional: Customize which Gemini models are used for Claude Code's model aliases
-    # BIG_MODEL="gemini-1.5-pro-latest"    # For 'sonnet' or 'opus' requests from Claude Code
-    # SMALL_MODEL="gemini-1.5-flash-latest" # For 'haiku' requests from Claude Code
+    # Optional: Model mappings for Claude Code aliases
+    BIG_MODEL="gemini-1.5-pro-latest"    # For 'sonnet' or 'opus' requests
+    SMALL_MODEL="gemini-1.5-flash-latest" # For 'haiku' requests
     
-    # Optional: Server and performance settings
-    # HOST="0.0.0.0"
-    # PORT="8082"
-    # LOG_LEVEL="INFO" # (DEBUG, INFO, WARNING, ERROR, CRITICAL)
-    # MAX_TOKENS_LIMIT="8192" # Max tokens for Gemini
-    # REQUEST_TIMEOUT="60" # Seconds
-    # MAX_RETRIES="2"      # LiteLLM retries to Gemini
+    # Optional: Server settings
+    HOST="0.0.0.0"
+    PORT="8082"
+    LOG_LEVEL="WARNING"  # DEBUG, INFO, WARNING, ERROR, CRITICAL
+    
+    # Optional: Performance and reliability settings
+    MAX_TOKENS_LIMIT="8192"           # Max tokens for Gemini responses
+    REQUEST_TIMEOUT="90"              # Request timeout in seconds
+    MAX_RETRIES="2"                   # LiteLLM retries to Gemini
+    MAX_STREAMING_RETRIES="3"         # Streaming-specific retry attempts
+    
+    # Optional: Streaming control (use if experiencing issues)
+    FORCE_DISABLE_STREAMING="false"     # Disable streaming globally
+    EMERGENCY_DISABLE_STREAMING="false" # Emergency streaming disable
     ```
-    The server defaults to `gemini-1.5-pro-latest` for `BIG_MODEL` and `gemini-1.5-flash-latest` for `SMALL_MODEL`.
 
 5.  **Run the server**:
     The `server.py` script includes a `main()` function that starts the Uvicorn server:
@@ -108,6 +130,7 @@ This server acts as a bridge, enabling you to use **Claude Code** with Google's 
 5.  **Gemini Response**: Gemini processes the request and sends its response back through LiteLLM.
 6.  **Proxy Translation (Gemini to Anthropic)**: The proxy server:
     *   Receives the Gemini response from LiteLLM (this can be a stream of events or a complete JSON object).
+    *   Handles streaming errors and malformed chunks with intelligent recovery.
     *   Converts Gemini's output (text, tool calls, stop reasons) back into the Anthropic Messages API format that Claude Code expects.
 7.  **Response to Claude Code**: The proxy sends the Anthropic-formatted response back to your Claude Code client, which then displays the result or performs the requested action.
 
@@ -125,13 +148,53 @@ The server maintains a list of known Gemini models. If a recognized Gemini model
 
 - `POST /v1/messages`: The primary endpoint for Claude Code to send messages to Gemini. It's fully compatible with the Anthropic Messages API specification that Claude Code uses.
 - `POST /v1/messages/count_tokens`: Allows Claude Code to estimate the token count for a set of messages, using Gemini's tokenization.
-- `GET /health`: Returns the health status of the proxy, including API key configuration and basic API key validation.
+- `GET /health`: Returns the health status of the proxy, including API key configuration, streaming settings, and basic API key validation.
 - `GET /test-connection`: Performs a quick API call to Gemini to verify connectivity and that your `GEMINI_API_KEY` is working.
 - `GET /`: Root endpoint providing a welcome message, current configuration summary (models, limits), and available endpoints.
 
+## Error Handling & Troubleshooting
+
+### Common Issues and Solutions
+
+**Streaming Errors (malformed chunks):**
+- The proxy automatically handles malformed JSON chunks from Gemini
+- If streaming becomes unstable, set `FORCE_DISABLE_STREAMING=true` as a temporary fix
+- Increase `MAX_STREAMING_RETRIES` for more resilient streaming
+
+**Gemini 500 Internal Server Errors:**
+- The proxy automatically retries with exponential backoff
+- These are temporary Gemini API issues that resolve automatically
+- Check `/health` endpoint to monitor API status
+
+**Connection Timeouts:**
+- Increase `REQUEST_TIMEOUT` if experiencing frequent timeouts
+- Check your internet connection and firewall settings
+- Use `/test-connection` endpoint to verify API connectivity
+
+**Rate Limiting:**
+- Monitor your Google AI Studio quota in the Google Cloud Console
+- The proxy will provide specific rate limit guidance in error messages
+
+### Emergency Mode
+
+If you experience persistent issues:
+```bash
+# Disable streaming temporarily
+export EMERGENCY_DISABLE_STREAMING=true
+
+# Or force disable all streaming
+export FORCE_DISABLE_STREAMING=true
+```
+
 ## Logging
 
-The server provides detailed logs, which are especially useful for understanding how Claude Code requests are translated for Gemini. Logs are colorized in TTY environments for easier reading. Adjust verbosity with the `LOG_LEVEL` environment variable.
+The server provides detailed logs, which are especially useful for understanding how Claude Code requests are translated for Gemini and for monitoring error recovery. Logs are colorized in TTY environments for easier reading. Adjust verbosity with the `LOG_LEVEL` environment variable:
+
+- `DEBUG`: Detailed request/response logging and error recovery steps
+- `INFO`: General operation logging
+- `WARNING`: Error recovery and fallback notifications (recommended)
+- `ERROR`: Only errors and failures
+- `CRITICAL`: Only critical failures
 
 ## The `CLAUDE.MD` File: Guiding Gemini for Claude Code
 
@@ -150,10 +213,25 @@ When you run `claude` in a project directory, the Claude Code CLI automatically 
 
 **Recommendation:** Always copy the `CLAUDE.MD` from this proxy's repository into the root of any project where you intend to use Claude Code with this Gemini proxy. This ensures Gemini receives these vital instructions for every session.
 
+## Performance Tips
+
+- **Model Selection**: Use `gemini-1.5-flash-latest` for faster responses, `gemini-1.5-pro-latest` for more complex tasks
+- **Streaming**: Keep streaming enabled for better interactivity; the proxy handles errors automatically
+- **Timeouts**: Increase `REQUEST_TIMEOUT` for complex requests that need more processing time
+- **Retries**: Adjust `MAX_STREAMING_RETRIES` based on your network stability
+
 ## Contributing
 
 Contributions, issues, and feature requests are welcome! Please submit them on the GitHub repository.
 
+Areas where contributions are especially valuable:
+- Additional Gemini model support
+- Performance optimizations
+- Enhanced error recovery strategies
+- Documentation improvements
+
 ## Thanks
 
 This project was heavily inspired by and builds upon the foundational work of the [claude-code-proxy by @1rgs](https://github.com/1rgs/claude-code-proxy). Their original proxy was instrumental in demonstrating the viability of such a bridge.
+
+Special thanks to the community for testing and feedback on error handling improvements.
