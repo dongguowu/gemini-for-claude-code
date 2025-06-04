@@ -176,20 +176,84 @@ root_logger.addFilter(SimpleMessageFilter())
 for uvicorn_logger in ["uvicorn", "uvicorn.access", "uvicorn.error"]:
     logging.getLogger(uvicorn_logger).setLevel(logging.WARNING)
 
-app = FastAPI(title="Gemini-to-Claude API Proxy", version="2.3.1")
+app = FastAPI(title="Gemini-to-Claude API Proxy", version="2.3.2")
 
-# Schema cleaner
+# Enhanced error classification
+def classify_gemini_error(error_msg: str) -> str:
+    """
+    Provide specific error guidance for common Gemini issues.
+    
+    Args:
+        error_msg: The original error message from the API
+        
+    Returns:
+        Enhanced error message with specific guidance, or original message if no specific guidance available
+    """
+    error_lower = error_msg.lower()
+    
+    # Tool schema validation errors
+    if "function_declarations" in error_lower and "format" in error_lower:
+        if "only 'enum' and 'date-time' are supported" in error_lower:
+            return "Tool schema error: Gemini only supports 'enum' and 'date-time' formats for string parameters. Remove other format types like 'url', 'email', 'uri', etc."
+        else:
+            return "Tool schema validation error. Check your tool parameter definitions for unsupported format types or properties."
+    
+    # Rate limiting
+    elif "rate limit" in error_lower or "quota" in error_lower:
+        return "Rate limit or quota exceeded. Please wait a moment and try again. Check your Google Cloud Console for quota limits."
+    
+    # Authentication issues
+    elif "api key" in error_lower or "authentication" in error_lower or "unauthorized" in error_lower:
+        return "API key error. Please check that your GEMINI_API_KEY is valid and has the necessary permissions."
+    
+    # Parsing/streaming issues
+    elif "parsing" in error_lower or "json" in error_lower or "malformed" in error_lower:
+        return "Response parsing error. This is often a temporary Gemini API issue - please retry your request."
+    
+    # Connection issues
+    elif "connection" in error_lower or "timeout" in error_lower:
+        return "Connection or timeout error. Please check your internet connection and try again."
+    
+    # Safety/content filtering
+    elif "safety" in error_lower or "content" in error_lower and "filter" in error_lower:
+        return "Content filtered by Gemini's safety systems. Please modify your request to comply with content policies."
+    
+    # Token/length issues
+    elif "token" in error_lower and ("limit" in error_lower or "exceed" in error_lower):
+        return "Token limit exceeded. Please reduce the length of your request or increase the max_tokens parameter."
+    
+    # Default: return original message
+    return error_msg
+
+# Enhanced schema cleaner
 def clean_gemini_schema(schema: Any) -> Any:
+    """
+    Recursively removes unsupported fields from a JSON schema for Gemini compatibility.
+    
+    Gemini has specific requirements:
+    - No 'additionalProperties' or 'default' fields
+    - String formats limited to 'enum' and 'date-time' only
+    - Nested schemas must also be cleaned
+    
+    Args:
+        schema: The JSON schema to clean
+        
+    Returns:
+        Cleaned schema compatible with Gemini
+    """
     if isinstance(schema, dict):
+        # Remove fields unsupported by Gemini
         schema.pop("additionalProperties", None)
         schema.pop("default", None)
 
+        # Handle string format restrictions
         if schema.get("type") == "string" and "format" in schema:
             allowed_formats = {"enum", "date-time"}
             if schema["format"] not in allowed_formats:
-                logger.debug(f"Removing unsupported format '{schema['format']}' for string type")
+                logger.debug(f"Removing unsupported format '{schema['format']}' for string type in Gemini schema")
                 schema.pop("format")
 
+        # Recursively clean nested schemas
         for key, value in list(schema.items()):
             schema[key] = clean_gemini_schema(value)
                 
@@ -304,6 +368,21 @@ class MessagesResponse(BaseModel):
 
 # Tool result parsing
 def parse_tool_result_content(content):
+    """
+    Parse and normalize tool result content into a string format.
+    
+    Handles various content types that can be returned by tools:
+    - Simple strings
+    - Lists of content blocks  
+    - Dictionaries with structured data
+    - Mixed content types
+    
+    Args:
+        content: Tool result content in various formats
+        
+    Returns:
+        Normalized string representation of the content
+    """
     if content is None:
         return "No content provided"
 
@@ -340,8 +419,30 @@ def parse_tool_result_content(content):
     except:
         return "Unparseable content"
 
-# Message conversion
+# Enhanced message conversion
 def convert_anthropic_to_litellm(anthropic_request: MessagesRequest) -> Dict[str, Any]:
+    """
+    Convert Anthropic API request format to LiteLLM format for Gemini.
+    
+    This function handles the complex conversion between Anthropic's message structure 
+    and LiteLLM's expected format, particularly for tool interactions:
+    
+    Key conversion challenges:
+    1. Anthropic allows mixed content (text + tool_result) in single user message
+    2. LiteLLM expects tool results as separate "tool" role messages  
+    3. Assistant messages with only tool_calls should not have content field set
+    4. Gemini has specific schema requirements (no unsupported formats)
+    
+    Message flow example:
+    - Anthropic user message: [text, tool_result] 
+    - Becomes LiteLLM: user message (text) + tool message (result)
+    
+    Args:
+        anthropic_request: The Anthropic API request to convert
+        
+    Returns:
+        Dictionary in LiteLLM format ready for API call
+    """
     litellm_messages = []
     
     # System message handling
@@ -367,7 +468,7 @@ def convert_anthropic_to_litellm(anthropic_request: MessagesRequest) -> Dict[str
             litellm_messages.append({"role": msg.role, "content": msg.content})
             continue
 
-        # Process content blocks
+        # Process content blocks - accumulate different types
         text_parts = []
         image_parts = []
         tool_calls = []
@@ -396,7 +497,8 @@ def convert_anthropic_to_litellm(anthropic_request: MessagesRequest) -> Dict[str
                     }
                 })
             elif block.type == Constants.CONTENT_TOOL_RESULT and msg.role == Constants.ROLE_USER:
-                # Add user message for accumulated content if any
+                # CRITICAL: Split user message when tool_result is encountered
+                # Any preceding text/image content must be sent as separate user message
                 if text_parts or image_parts:
                     content_parts = []
                     text_content = "".join(text_parts).strip()
@@ -411,7 +513,7 @@ def convert_anthropic_to_litellm(anthropic_request: MessagesRequest) -> Dict[str
                     text_parts.clear()
                     image_parts.clear()
 
-                # Add tool message
+                # Add tool result as separate "tool" role message
                 parsed_content = parse_tool_result_content(block.content)
                 pending_tool_messages.append({
                     "role": Constants.ROLE_TOOL,
@@ -419,8 +521,9 @@ def convert_anthropic_to_litellm(anthropic_request: MessagesRequest) -> Dict[str
                     "content": parsed_content
                 })
 
-        # Finalize message
+        # Finalize message based on role
         if msg.role == Constants.ROLE_USER:
+            # Add any remaining text/image content
             if text_parts or image_parts:
                 content_parts = []
                 text_content = "".join(text_parts).strip()
@@ -432,28 +535,33 @@ def convert_anthropic_to_litellm(anthropic_request: MessagesRequest) -> Dict[str
                     "role": Constants.ROLE_USER,
                     "content": content_parts[0]["text"] if len(content_parts) == 1 and content_parts[0]["type"] == Constants.CONTENT_TEXT else content_parts
                 })
+            # Add any pending tool messages
             litellm_messages.extend(pending_tool_messages)
+            
         elif msg.role == Constants.ROLE_ASSISTANT:
             assistant_msg = {"role": Constants.ROLE_ASSISTANT}
             
+            # Handle content for assistant messages
             content_parts = []
             text_content = "".join(text_parts).strip()
             if text_content:
                 content_parts.append({"type": Constants.CONTENT_TEXT, "text": text_content})
             content_parts.extend(image_parts)
             
+            # FIXED: Don't set content to None - let LiteLLM handle missing content
+            # Some APIs prefer missing field vs null vs empty string
             if content_parts:
                 assistant_msg["content"] = content_parts[0]["text"] if len(content_parts) == 1 and content_parts[0]["type"] == Constants.CONTENT_TEXT else content_parts
-            else:
-                assistant_msg["content"] = None
+            # Removed: else: assistant_msg["content"] = None
                 
             if tool_calls:
                 assistant_msg["tool_calls"] = tool_calls
                 
+            # Only add message if it has actual content or tool calls
             if assistant_msg.get("content") or assistant_msg.get("tool_calls"):
                 litellm_messages.append(assistant_msg)
 
-    # Build request
+    # Build final LiteLLM request
     litellm_request = {
         "model": anthropic_request.model,
         "messages": litellm_messages,
@@ -470,7 +578,7 @@ def convert_anthropic_to_litellm(anthropic_request: MessagesRequest) -> Dict[str
     if anthropic_request.top_k is not None:
         litellm_request["topK"] = anthropic_request.top_k
 
-    # Add tools
+    # Add tools with schema cleaning
     if anthropic_request.tools:
         valid_tools = []
         for tool in anthropic_request.tools:
@@ -487,7 +595,7 @@ def convert_anthropic_to_litellm(anthropic_request: MessagesRequest) -> Dict[str
         if valid_tools:
             litellm_request["tools"] = valid_tools
 
-    # Add tool choice
+    # Add tool choice configuration
     if anthropic_request.tool_choice:
         choice_type = anthropic_request.tool_choice.get("type")
         if choice_type == "auto":
@@ -502,14 +610,14 @@ def convert_anthropic_to_litellm(anthropic_request: MessagesRequest) -> Dict[str
         else:
             litellm_request["tool_choice"] = "auto"
 
-    # Add thinking config
+    # Add thinking configuration (Gemini specific)
     if anthropic_request.thinking is not None:
         if anthropic_request.thinking.enabled:
             litellm_request["thinkingConfig"] = {"thinkingBudget": 24576}
         else:
             litellm_request["thinkingConfig"] = {"thinkingBudget": 0}
 
-    # Add user metadata
+    # Add user metadata if provided
     if (anthropic_request.metadata and 
         "user_id" in anthropic_request.metadata and
         isinstance(anthropic_request.metadata["user_id"], str)):
@@ -519,8 +627,21 @@ def convert_anthropic_to_litellm(anthropic_request: MessagesRequest) -> Dict[str
 
 # Response conversion
 def convert_litellm_to_anthropic(litellm_response, original_request: MessagesRequest) -> MessagesResponse:
+    """
+    Convert LiteLLM (Gemini) response back to Anthropic API format.
+    
+    Handles both object and dictionary response formats from LiteLLM,
+    extracts content and tool calls, and maps finish reasons appropriately.
+    
+    Args:
+        litellm_response: Response from LiteLLM (can be object or dict)
+        original_request: Original request for context (model name, etc.)
+        
+    Returns:
+        MessagesResponse in Anthropic format
+    """
     try:
-        # Extract response data
+        # Extract response data safely
         response_id = f"msg_{uuid.uuid4()}"
         content_text = ""
         tool_calls = None
@@ -528,6 +649,7 @@ def convert_litellm_to_anthropic(litellm_response, original_request: MessagesReq
         prompt_tokens = 0
         completion_tokens = 0
 
+        # Handle LiteLLM ModelResponse object format
         if hasattr(litellm_response, 'choices') and hasattr(litellm_response, 'usage'):
             choices = litellm_response.choices
             message = choices[0].message if choices else None
@@ -540,6 +662,8 @@ def convert_litellm_to_anthropic(litellm_response, original_request: MessagesReq
                 usage = litellm_response.usage
                 prompt_tokens = getattr(usage, "prompt_tokens", 0)
                 completion_tokens = getattr(usage, "completion_tokens", 0)
+                
+        # Handle dictionary response format
         elif isinstance(litellm_response, dict):
             choices = litellm_response.get("choices", [])
             message = choices[0].get("message", {}) if choices else {}
@@ -554,15 +678,18 @@ def convert_litellm_to_anthropic(litellm_response, original_request: MessagesReq
         # Build content blocks
         content_blocks = []
         
+        # Add text content if present
         if content_text:
             content_blocks.append(ContentBlockText(type=Constants.CONTENT_TEXT, text=content_text))
 
+        # Process tool calls
         if tool_calls:
             if not isinstance(tool_calls, list):
                 tool_calls = [tool_calls]
 
             for tool_call in tool_calls:
                 try:
+                    # Extract tool call data from different formats
                     if isinstance(tool_call, dict):
                         tool_id = tool_call.get("id", f"tool_{uuid.uuid4()}")
                         function_data = tool_call.get(Constants.TOOL_FUNCTION, {})
@@ -578,6 +705,7 @@ def convert_litellm_to_anthropic(litellm_response, original_request: MessagesReq
                     if not name:
                         continue
 
+                    # Parse tool arguments safely
                     try:
                         arguments_dict = json.loads(arguments_str)
                     except json.JSONDecodeError:
@@ -593,10 +721,11 @@ def convert_litellm_to_anthropic(litellm_response, original_request: MessagesReq
                     logger.warning(f"Error processing tool call: {e}")
                     continue
 
+        # Ensure at least one content block
         if not content_blocks:
             content_blocks.append(ContentBlockText(type=Constants.CONTENT_TEXT, text=""))
 
-        # Map stop reason
+        # Map finish reason to Anthropic format
         if finish_reason == "length":
             stop_reason = Constants.STOP_MAX_TOKENS
         elif finish_reason == "tool_calls":
@@ -630,17 +759,31 @@ def convert_litellm_to_anthropic(litellm_response, original_request: MessagesReq
             usage=Usage(input_tokens=0, output_tokens=0)
         )
 
-# Simplified streaming handler
+# Enhanced streaming handler with malformed chunk detection
 async def handle_streaming(response_generator, original_request: MessagesRequest):
+    """
+    Handle streaming responses from LiteLLM (Gemini) and convert to Anthropic SSE format.
+    
+    Includes basic malformed chunk detection to improve resilience against
+    common Gemini streaming issues like incomplete JSON chunks.
+    
+    Args:
+        response_generator: Async generator from LiteLLM
+        original_request: Original request for context
+        
+    Yields:
+        Server-sent events in Anthropic format
+    """
     message_id = f"msg_{uuid.uuid4().hex[:24]}"
     
-    # Send initial events
+    # Send initial SSE events
     yield f"event: {Constants.EVENT_MESSAGE_START}\ndata: {json.dumps({'type': Constants.EVENT_MESSAGE_START, 'message': {'id': message_id, 'type': 'message', 'role': Constants.ROLE_ASSISTANT, 'model': original_request.original_model or original_request.model, 'content': [], 'stop_reason': None, 'stop_sequence': None, 'usage': {'input_tokens': 0, 'output_tokens': 0}}})}\n\n"
     
     yield f"event: {Constants.EVENT_CONTENT_BLOCK_START}\ndata: {json.dumps({'type': Constants.EVENT_CONTENT_BLOCK_START, 'index': 0, 'content_block': {'type': Constants.CONTENT_TEXT, 'text': ''}})}\n\n"
     
     yield f"event: {Constants.EVENT_PING}\ndata: {json.dumps({'type': Constants.EVENT_PING})}\n\n"
 
+    # Streaming state management
     accumulated_text = ""
     text_block_index = 0
     tool_block_counter = 0
@@ -652,13 +795,22 @@ async def handle_streaming(response_generator, original_request: MessagesRequest
     try:
         async for chunk in response_generator:
             try:
-                # Handle string chunks
+                # Handle string chunks with malformed chunk detection
                 if isinstance(chunk, str):
                     if chunk.strip() == "[DONE]":
                         break
+                    
+                    # IMPROVED: Basic malformed chunk detection
+                    chunk_stripped = chunk.strip()
+                    malformed_patterns = ["{", "}", '{"', '"}', "{}", "null", '""']
+                    if chunk_stripped in malformed_patterns:
+                        logger.debug(f"Skipping malformed chunk: '{chunk_stripped}'")
+                        continue
+                    
                     try:
                         chunk = json.loads(chunk)
                     except json.JSONDecodeError:
+                        logger.debug(f"Could not parse chunk as JSON, skipping: {chunk[:50]}...")
                         continue
 
                 # Extract chunk data
@@ -731,11 +883,11 @@ async def handle_streaming(response_generator, original_request: MessagesRequest
 
     except Exception as e:
         logger.error(f"Streaming error: {e}")
-        # Send error message
-        error_text = "\n[Streaming error occurred - please try again]\n"
+        # Send error message with enhanced error classification
+        error_text = f"\n[{classify_gemini_error(str(e))}]\n"
         yield f"event: {Constants.EVENT_CONTENT_BLOCK_DELTA}\ndata: {json.dumps({'type': Constants.EVENT_CONTENT_BLOCK_DELTA, 'index': text_block_index, 'delta': {'type': Constants.DELTA_TEXT, 'text': error_text}})}\n\n"
 
-    # Send final events
+    # Send final SSE events
     yield f"event: {Constants.EVENT_CONTENT_BLOCK_STOP}\ndata: {json.dumps({'type': Constants.EVENT_CONTENT_BLOCK_STOP, 'index': text_block_index})}\n\n"
     
     for tool_data in current_tool_calls.values():
@@ -805,13 +957,8 @@ async def create_message(request: MessagesRequest, raw_request: Request):
 
     except litellm.exceptions.APIError as e:
         logger.error(f"LiteLLM API Error: {e}")
-        error_msg = f"API Error: {str(e)}"
-        if "connection" in str(e).lower():
-            error_msg = "Connection error with Gemini API. Please check your internet connection and API key."
-        elif "timeout" in str(e).lower():
-            error_msg = "Request timeout. Please try again with a shorter request."
-        elif "rate limit" in str(e).lower():
-            error_msg = "Rate limit exceeded. Please wait a moment and try again."
+        # Use enhanced error classification
+        error_msg = classify_gemini_error(str(e))
         raise HTTPException(status_code=getattr(e, 'status_code', 500), detail=error_msg)
     except ConnectionError as e:
         logger.error(f"Connection Error: {e}")
@@ -821,11 +968,7 @@ async def create_message(request: MessagesRequest, raw_request: Request):
         raise HTTPException(status_code=504, detail="Request timeout. Please try again.")
     except Exception as e:
         logger.error(f"Error processing request: {e}")
-        error_msg = "Internal Server Error"
-        if "fetch failed" in str(e).lower():
-            error_msg = "Network connection failed. Please check your internet connection."
-        elif "connection" in str(e).lower():
-            error_msg = "Connection error. Please try again."
+        error_msg = classify_gemini_error(str(e))
         raise HTTPException(status_code=500, detail=error_msg)
 
 @app.post("/v1/messages/count_tokens")
@@ -861,7 +1004,8 @@ async def count_tokens(request: TokenCountRequest, raw_request: Request):
 
     except Exception as e:
         logger.error(f"Error counting tokens: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error counting tokens: {str(e)}")
+        error_msg = classify_gemini_error(str(e))
+        raise HTTPException(status_code=500, detail=f"Error counting tokens: {error_msg}")
 
 @app.get("/health")
 async def health_check():
@@ -869,7 +1013,7 @@ async def health_check():
         health_status = {
             "status": "healthy",
             "timestamp": datetime.now().isoformat(),
-            "version": "2.3.1",
+            "version": "2.3.2",
             "gemini_api_configured": bool(config.gemini_api_key),
             "api_key_valid": config.validate_api_key()
         }
@@ -914,7 +1058,7 @@ async def test_connection():
             content={
                 "status": "failed",
                 "error_type": "API Error",
-                "message": str(e),
+                "message": classify_gemini_error(str(e)),
                 "timestamp": datetime.now().isoformat(),
                 "suggestions": [
                     "Check your GEMINI_API_KEY is valid",
@@ -930,7 +1074,7 @@ async def test_connection():
             content={
                 "status": "failed",
                 "error_type": "Connection Error", 
-                "message": str(e),
+                "message": classify_gemini_error(str(e)),
                 "timestamp": datetime.now().isoformat(),
                 "suggestions": [
                     "Check your internet connection",
@@ -943,7 +1087,7 @@ async def test_connection():
 @app.get("/")
 async def root():
     return {
-        "message": f"Simplified Gemini-to-Claude API Proxy v2.3.1",
+        "message": f"Enhanced Gemini-to-Claude API Proxy v2.3.2",
         "status": "running",
         "config": {
             "big_model": config.big_model,
@@ -957,6 +1101,12 @@ async def root():
             "count_tokens": "/v1/messages/count_tokens", 
             "health": "/health",
             "test_connection": "/test-connection"
+        },
+        "improvements": {
+            "enhanced_error_messages": "Specific guidance for Gemini API issues",
+            "content_handling_fix": "Proper assistant message content handling",
+            "malformed_chunk_detection": "Basic resilience against streaming issues",
+            "detailed_documentation": "Comprehensive function documentation"
         },
         "tips": {
             "connection_issues": "If experiencing connection errors, check /test-connection",
@@ -1027,7 +1177,7 @@ def validate_startup():
 
 def main():
     if len(sys.argv) > 1 and sys.argv[1] == "--help":
-        print("Simplified Gemini-to-Claude API Proxy v2.3.1")
+        print("Enhanced Gemini-to-Claude API Proxy v2.3.2")
         print("")
         print("Usage: uvicorn server:app --reload --host 0.0.0.0 --port 8082")
         print("")
@@ -1044,6 +1194,12 @@ def main():
         print(f"  REQUEST_TIMEOUT - Request timeout in seconds (default: 60)")
         print(f"  MAX_RETRIES - Maximum retries (default: 2)")
         print("")
+        print("Key improvements in v2.3.2:")
+        print("  ✅ Fixed content handling for assistant messages with tool calls")
+        print("  ✅ Enhanced error messages with specific Gemini guidance")
+        print("  ✅ Basic malformed chunk detection for streaming resilience")
+        print("  ✅ Comprehensive function documentation")
+        print("")
         print("Available Gemini models:")
         for model in model_manager.gemini_models:
             print(f"  - {model}")
@@ -1055,7 +1211,7 @@ def main():
         sys.exit(1)
 
     # Configuration summary
-    print("🚀 Simplified Gemini-to-Claude API Proxy v2.3.1")
+    print("🚀 Enhanced Gemini-to-Claude API Proxy v2.3.2")
     print(f"✅ Configuration loaded successfully")
     print(f"   Big Model: {config.big_model}")
     print(f"   Small Model: {config.small_model}")
@@ -1066,12 +1222,15 @@ def main():
     print(f"   Log Level: {config.log_level}")
     print(f"   Server: {config.host}:{config.port}")
     print("")
-    print("🔗 Connection Settings:")
-    print(f"   Request Timeout: {config.request_timeout}s")
-    print(f"   Max Retries: {config.max_retries}")
+    print("🔧 Key Improvements:")
+    print("   ✅ Fixed assistant content handling (no more content: null)")
+    print("   ✅ Enhanced error classification with specific Gemini guidance")
+    print("   ✅ Basic malformed chunk detection for streaming")
+    print("   ✅ Comprehensive documentation and comments")
     print("")
     print("🔗 Troubleshooting Tips:")
     print("   - For connection errors: Check /test-connection endpoint")
+    print("   - Enhanced error messages provide specific guidance")
     print("   - Ensure GEMINI_API_KEY is valid and has proper permissions")
     print("   - Check firewall/proxy settings if connection fails")
     print("")
