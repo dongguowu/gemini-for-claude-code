@@ -116,7 +116,11 @@ This server acts as a bridge, enabling you to use **Claude Code** with Google's 
       ```bash
       cp /path/to/gemini-code/CLAUDE.md /your/project/directory/
       ```
-    - When Claude Code starts in a directory containing `CLAUDE.md`, it automatically reads this file and incorporates its content into the system prompt. This is essential for guiding Gemini to work optimally within the Claude Code environment.
+    - When starting a new conversation with Claude Code in that directory, begin with:
+      ```
+      First read and process CLAUDE.md with intent. After understanding and agreeing to use the policies and practices outlined in the document, respond with YESAdd commentMore actions
+      ```
+    - This ensures Gemini receives important context and instructions for better assistance.
 
 ## How It Works: Powering Claude Code with Gemini
 
