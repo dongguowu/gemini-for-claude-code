@@ -121,6 +121,8 @@ This server acts as a bridge, enabling you to use **Claude Code** with Google's 
       First read and process CLAUDE.md with intent. After understanding and agreeing to use the policies and practices outlined in the document, respond with YES
       ```
     - This ensures Gemini receives important context and instructions for better assistance.
+  
+    - If Gemini still fucks up, ask it to read CLAUDE.md again. This might or might not help!
 
 ## How It Works: Powering Claude Code with Gemini
 
