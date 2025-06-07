@@ -118,7 +118,7 @@ This server acts as a bridge, enabling you to use **Claude Code** with Google's 
       ```
     - When starting a new conversation with Claude Code in that directory, begin with:
       ```
-      First read and process CLAUDE.md with intent. After understanding and agreeing to use the policies and practices outlined in the document, respond with YESAdd commentMore actions
+      First read and process CLAUDE.md with intent. After understanding and agreeing to use the policies and practices outlined in the document, respond with YES
       ```
     - This ensures Gemini receives important context and instructions for better assistance.
 
