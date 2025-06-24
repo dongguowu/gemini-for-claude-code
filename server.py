@@ -702,18 +702,19 @@ def convert_litellm_to_anthropic(litellm_response, original_request: MessagesReq
         )
 
 # Enhanced streaming handler with more robust error recovery
-async def handle_streaming_with_recovery(response_generator, original_request: MessagesRequest):
+async def handle_streaming_with_recovery(response_generator, original_request: MessagesRequest, input_tokens: int):
     """Enhanced streaming handler with robust error recovery for malformed chunks."""
     message_id = f"msg_{uuid.uuid4().hex[:24]}"
     
     # Send initial SSE events
-    yield f"event: {Constants.EVENT_MESSAGE_START}\ndata: {json.dumps({'type': Constants.EVENT_MESSAGE_START, 'message': {'id': message_id, 'type': 'message', 'role': Constants.ROLE_ASSISTANT, 'model': original_request.original_model or original_request.model, 'content': [], 'stop_reason': None, 'stop_sequence': None, 'usage': {'input_tokens': 0, 'output_tokens': 0}}})}\n\n"
+    yield f"event: {Constants.EVENT_MESSAGE_START}\ndata: {json.dumps({'type': Constants.EVENT_MESSAGE_START, 'message': {'id': message_id, 'type': 'message', 'role': Constants.ROLE_ASSISTANT, 'model': original_request.original_model or original_request.model, 'content': [], 'stop_reason': None, 'stop_sequence': None, 'usage': {'input_tokens': input_tokens, 'output_tokens': 0}}})}\n\n"
     
     yield f"event: {Constants.EVENT_CONTENT_BLOCK_START}\ndata: {json.dumps({'type': Constants.EVENT_CONTENT_BLOCK_START, 'index': 0, 'content_block': {'type': Constants.CONTENT_TEXT, 'text': ''}})}\n\n"
     
     yield f"event: {Constants.EVENT_PING}\ndata: {json.dumps({'type': Constants.EVENT_PING})}\n\n"
 
     # Streaming state management
+    all_chunks = []
     accumulated_text = ""
     text_block_index = 0
     tool_block_counter = 0
@@ -824,6 +825,7 @@ async def handle_streaming_with_recovery(response_generator, original_request: M
                 
                 # Reset consecutive error counter on successful chunk retrieval
                 consecutive_errors = 0
+                all_chunks.append(chunk)
                 
                 # Handle string chunks with enhanced validation
                 if isinstance(chunk, str):
@@ -1009,6 +1011,10 @@ async def handle_streaming_with_recovery(response_generator, original_request: M
         
         if stream_terminated_early and final_stop_reason == Constants.STOP_END_TURN:
             final_stop_reason = Constants.STOP_ERROR
+
+        final_response = litellm.stream_chunk_builder(all_chunks)
+        if final_response and hasattr(final_response, 'usage'):
+            output_tokens = getattr(final_response.usage, "completion_tokens", 0)
         
         usage_data = {"input_tokens": input_tokens, "output_tokens": output_tokens}
         yield f"event: {Constants.EVENT_MESSAGE_DELTA}\ndata: {json.dumps({'type': Constants.EVENT_MESSAGE_DELTA, 'delta': {'stop_reason': final_stop_reason, 'stop_sequence': None}, 'usage': usage_data})}\n\n"
@@ -1061,6 +1067,17 @@ async def create_message(request: MessagesRequest, raw_request: Request):
 
         # Enhanced streaming with better retry logic
         if request.stream:
+            # Pre-calculate input tokens as they are not available in the stream.
+            # We use litellm.token_counter as it's the only way to get a non-zero, close-to-accurate count of input tokens for streaming calls.
+            # While tokenizer drift is a concern, this is a practical trade-off for useful logging and cost estimation.
+            try:
+                input_tokens = litellm.token_counter(
+                    model=litellm_request["model"],
+                    messages=litellm_request["messages"]
+                )
+            except Exception:
+                input_tokens = 0
+
             streaming_retry_count = 0
             max_retries = config.max_streaming_retries
             
@@ -1077,7 +1094,7 @@ async def create_message(request: MessagesRequest, raw_request: Request):
                     response_generator = await litellm.acompletion(**litellm_request)
                     
                     return StreamingResponse(
-                        handle_streaming_with_recovery(response_generator, request),
+                        handle_streaming_with_recovery(response_generator, request, input_tokens),
                         media_type="text/event-stream",
                         headers={
                             "Cache-Control": "no-cache",
