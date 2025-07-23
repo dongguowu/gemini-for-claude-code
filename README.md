@@ -133,8 +133,8 @@ GEMINI_API_KEY="your-google-ai-studio-key"
 
 ```env
 # Model Mappings
-BIG_MODEL="gemini-1.5-pro-latest"      # For 'sonnet'/'opus' requests
-SMALL_MODEL="gemini-1.5-flash-latest"  # For 'haiku' requests
+BIG_MODEL="gemini-2.5-pro"      # For 'sonnet'/'opus' requests
+SMALL_MODEL="gemini-2.5-flash"  # For 'haiku' requests
 
 # Server Configuration
 HOST="0.0.0.0"                         # Server bind address
@@ -158,13 +158,10 @@ EMERGENCY_DISABLE_STREAMING="false"    # Emergency streaming disable
 
 ### Available Gemini Models
 
-The proxy supports all current Gemini models:
-- `gemini-1.5-pro-latest` (Recommended for complex tasks)
-- `gemini-1.5-flash-latest` (Recommended for speed)
-- `gemini-2.5-pro-preview-05-06` (Latest preview)
-- `gemini-2.5-flash-preview-04-17` (Flash preview)
-- `gemini-2.0-flash-exp` (Experimental)
-- `gemini-exp-1206` (Experimental)
+The proxy exclusively supports the **Gemini 2.5 series**, which includes:
+- **Stable Models**: `gemini-2.5-pro`, `gemini-2.5-flash`, `gemini-2.5-flash-lite`
+- **Preview Models**: Including TTS, native audio, and adaptive thinking
+- **Experimental Models**: For cutting-edge features and research
 
 ## 🔧 Advanced Usage
 
@@ -333,10 +330,10 @@ export MAX_RETRIES=1
 
 | Use Case | Recommended Model | Reasoning |
 |----------|------------------|-----------|
-| Code Review | `gemini-1.5-flash-latest` | Fast, efficient for syntax checking |
-| Complex Refactoring | `gemini-1.5-pro-latest` | Better reasoning for architectural changes |
-| Documentation | `gemini-1.5-flash-latest` | Good balance of speed and quality |
-| Debugging | `gemini-1.5-pro-latest` | Superior problem-solving capabilities |
+| Code Review | `gemini-2.5-flash` | Fast, efficient for syntax checking |
+| Complex Refactoring | `gemini-2.5-pro` | Better reasoning for architectural changes |
+| Documentation | `gemini-2.5-flash` | Good balance of speed and quality |
+| Debugging | `gemini-2.5-pro` | Superior problem-solving capabilities |
 
 ### Configuration Tuning
 
@@ -419,12 +416,12 @@ uvicorn server:app --reload --log-level debug
 
 ## 📝 Changelog
 
-### v2.5.0 - Enhanced Reliability
-- Advanced streaming error recovery
-- Multiple API key support with rotation
-- Improved error classification and messaging
-- Enhanced monitoring and diagnostics
-- Production-ready configuration options
+### v2.5.0 - Gemini 2.5 Series Update & Enhanced Reliability
+- **Exclusive Gemini 2.5 Support**: Updated to exclusively support the Gemini 2.5 series models
+- **Advanced Streaming Error Recovery**: Sophisticated handling of malformed JSON chunks
+- **Multiple API Key Support**: Round-robin rotation with automatic failover
+- **Improved Error Classification**: Actionable error messages with troubleshooting guidance
+- **Production-Ready**: Enhanced monitoring, diagnostics, and configuration options
 
 ### v2.4.x - Stability Improvements  
 - Better tool schema handling

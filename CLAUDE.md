@@ -8,6 +8,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 This project is a Python-based proxy server that enables using Google's Gemini models with the Anthropic Claude Code CLI. It acts as a translation layer, converting API requests and responses between the Anthropic and Gemini formats. The server is built with FastAPI and uses LiteLLM for interacting with the Gemini API.
 
+**This proxy exclusively supports the Gemini 2.5 series models.**
+
 ## Key Files
 
 -   `server.py`: The core of the application, containing all the FastAPI endpoints, data models (Pydantic), and logic for request/response translation.
@@ -65,7 +67,7 @@ The project does not have a dedicated test suite. The primary methods for testin
     -   `API_KEYS` should be a JSON array of strings. The server rotates through the list of keys for each request to balance usage.
     -   The `GEMINI_API_KEY` variable is deprecated but still supported for backward compatibility.
 -   **Model Mapping (`ModelManager` class):**
-    -   Maps Claude Code model aliases (e.g., `haiku`, `sonnet`) to specific Gemini models defined in the environment variables.
+    -   Maps Claude Code model aliases (e.g., `haiku`, `sonnet`) to specific Gemini 2.5 models defined in the environment variables. The default `BIG_MODEL` is `gemini-2.5-pro` and `SMALL_MODEL` is `gemini-2.5-flash`.
 -   **Request/Response Translation:**
     -   `convert_anthropic_to_litellm()`: Converts incoming Anthropic-formatted requests into the format expected by LiteLLM for Gemini.
     -   `convert_litellm_to_anthropic()`: Converts responses from LiteLLM back into the Anthropic format that Claude Code understands.
