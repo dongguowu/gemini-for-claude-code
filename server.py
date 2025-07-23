@@ -13,6 +13,7 @@ import uuid
 import time
 from dotenv import load_dotenv
 from datetime import datetime
+import itertools
 import sys
 
 # Load environment variables early
@@ -56,9 +57,12 @@ class Constants:
 # Simple Configuration
 class Config:
     def __init__(self):
-        self.gemini_api_key = os.environ.get("GEMINI_API_KEY")
-        if not self.gemini_api_key:
+        gemini_api_key_str = os.environ.get("GEMINI_API_KEY")
+        if not gemini_api_key_str:
             raise ValueError("GEMINI_API_KEY not found in environment variables")
+        
+        self.gemini_api_keys = [key.strip() for key in gemini_api_key_str.split(',')]
+        self.key_iterator = itertools.cycle(self.gemini_api_keys)
         
         self.big_model = os.environ.get("BIG_MODEL", "gemini-1.5-pro-latest")
         self.small_model = os.environ.get("SMALL_MODEL", "gemini-1.5-flash-latest")
@@ -76,18 +80,23 @@ class Config:
         self.force_disable_streaming = os.environ.get("FORCE_DISABLE_STREAMING", "false").lower() == "true"
         self.emergency_disable_streaming = os.environ.get("EMERGENCY_DISABLE_STREAMING", "false").lower() == "true"
         
-    def validate_api_key(self):
-        """Basic API key validation"""
-        if not self.gemini_api_key:
+    def get_next_api_key(self):
+        """Get the next API key from the list in a round-robin fashion."""
+        return next(self.key_iterator)
+
+    def validate_api_keys(self):
+        """Basic API key validation for a list of keys."""
+        if not self.gemini_api_keys:
             return False
-        # Basic format check for Google API keys
-        if not (self.gemini_api_key.startswith('AIza') and len(self.gemini_api_key) == 39):
-            return False
+        for key in self.gemini_api_keys:
+            if not (key.startswith('AIza') and len(key) == 39):
+                logger.warning(f"Invalid API key format for key ending in ...{key[-4:]}")
+                return False
         return True
 
 try:
     config = Config()
-    print(f"✅ Configuration loaded: API_KEY={'*' * 20}..., BIG_MODEL='{config.big_model}', SMALL_MODEL='{config.small_model}'")
+    print(f"✅ Configuration loaded: API Keys={len(config.gemini_api_keys)}, BIG_MODEL='{config.big_model}', SMALL_MODEL='{config.small_model}'")
 except Exception as e:
     print(f"🔴 Configuration Error: {e}")
     sys.exit(1)
@@ -1053,7 +1062,7 @@ async def create_message(request: MessagesRequest, raw_request: Request):
 
         # Convert request
         litellm_request = convert_anthropic_to_litellm(request)
-        litellm_request["api_key"] = config.gemini_api_key
+        litellm_request["api_key"] = config.get_next_api_key()
         
         # Log request details
         num_tools = len(request.tools) if request.tools else 0
@@ -1209,8 +1218,8 @@ async def health_check():
             "status": "healthy",
             "timestamp": datetime.now().isoformat(),
             "version": "2.5.0",
-            "gemini_api_configured": bool(config.gemini_api_key),
-            "api_key_valid": config.validate_api_key(),
+            "gemini_api_keys_configured": len(config.gemini_api_keys),
+            "api_keys_valid": config.validate_api_keys(),
             "streaming_config": {
                 "force_disabled": config.force_disable_streaming,
                 "emergency_disabled": config.emergency_disable_streaming,
@@ -1240,7 +1249,7 @@ async def test_connection():
             model="gemini/gemini-1.5-flash-latest",
             messages=[{"role": "user", "content": "Hello"}],
             max_tokens=5,
-            api_key=config.gemini_api_key
+            api_key=config.get_next_api_key()
         )
         
         return {
@@ -1352,12 +1361,12 @@ def validate_startup():
     print("🔍 Validating startup configuration...")
     
     # Check API key
-    if not config.gemini_api_key:
+    if not config.gemini_api_keys:
         print("🔴 FATAL: GEMINI_API_KEY is not set")
         return False
     
-    if not config.validate_api_key():
-        print("⚠️ WARNING: API key format validation failed")
+    if not config.validate_api_keys():
+        print("⚠️ WARNING: One or more API keys have an invalid format.")
     
     # Check network connectivity (basic)
     try:

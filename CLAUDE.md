@@ -10,7 +10,7 @@ This project is a Python-based proxy server that enables using Google's Gemini m
 
 -   `server.py`: The core of the application, containing all the FastAPI endpoints, data models (Pydantic), and logic for request/response translation.
 -   `requirements.txt`: Lists all Python dependencies.
--   `.env.example`: An example environment file for configuring the server, including API keys and model mappings.
+-   `.env.example`: An example environment file for configuring the server. It supports single or multiple (comma-separated) API keys and model mappings.
 -   `README.md`: Contains detailed setup and usage instructions.
 
 ## Common Development Tasks
@@ -41,7 +41,7 @@ The project does not have a dedicated test suite. The primary methods for testin
     ```bash
     curl http://localhost:8082/health
     ```
-2.  **Connection Test Endpoint:** Verifies the `GEMINI_API_KEY`.
+2.  **Connection Test Endpoint:** Verifies connectivity with one of the configured `GEMINI_API_KEY`s.
     ```bash
     curl http://localhost:8082/test-connection
     ```
@@ -59,7 +59,8 @@ The project does not have a dedicated test suite. The primary methods for testin
     -   It defines several endpoints, with `/v1/messages` being the primary one for handling Claude Code requests.
     -   Pydantic models are used extensively for request and response validation.
 -   **Configuration (`Config` class):**
-    -   Loads settings from environment variables (e.g., `GEMINI_API_KEY`, `BIG_MODEL`, `SMALL_MODEL`).
+    -   Loads settings from environment variables.
+    -   `GEMINI_API_KEY` can be a single key or a comma-separated list of keys. The server rotates through the list of keys for each request to balance usage.
 -   **Model Mapping (`ModelManager` class):**
     -   Maps Claude Code model aliases (e.g., `haiku`, `sonnet`) to specific Gemini models defined in the environment variables.
 -   **Request/Response Translation:**
