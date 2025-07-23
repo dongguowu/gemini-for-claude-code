@@ -57,11 +57,25 @@ class Constants:
 # Simple Configuration
 class Config:
     def __init__(self):
+        api_keys_str = os.environ.get("API_KEYS")
         gemini_api_key_str = os.environ.get("GEMINI_API_KEY")
-        if not gemini_api_key_str:
-            raise ValueError("GEMINI_API_KEY not found in environment variables")
-        
-        self.gemini_api_keys = [key.strip() for key in gemini_api_key_str.split(',')]
+
+        if api_keys_str:
+            try:
+                self.gemini_api_keys = json.loads(api_keys_str)
+                if not isinstance(self.gemini_api_keys, list) or not all(isinstance(key, str) for key in self.gemini_api_keys):
+                    raise ValueError("API_KEYS must be a JSON array of strings.")
+            except json.JSONDecodeError:
+                raise ValueError("Could not parse API_KEYS. Please ensure it is a valid JSON array.")
+        elif gemini_api_key_str:
+            logger.warning("GEMINI_API_KEY is deprecated. Please use API_KEYS instead.")
+            self.gemini_api_keys = [key.strip() for key in gemini_api_key_str.split(',')]
+        else:
+            raise ValueError("No API keys found. Please set either API_KEYS or GEMINI_API_KEY.")
+
+        if not self.gemini_api_keys:
+            raise ValueError("API key list cannot be empty.")
+            
         self.key_iterator = itertools.cycle(self.gemini_api_keys)
         
         self.big_model = os.environ.get("BIG_MODEL", "gemini-1.5-pro-latest")
@@ -1303,7 +1317,7 @@ async def root():
             "small_model": config.small_model,
             "available_models": model_manager.gemini_models[:5],
             "max_tokens_limit": config.max_tokens_limit,
-            "api_key_configured": bool(config.gemini_api_key),
+            "api_key_configured": bool(config.gemini_api_keys),
             "streaming": {
                 "force_disabled": config.force_disable_streaming,
                 "emergency_disabled": config.emergency_disable_streaming,
@@ -1385,7 +1399,8 @@ def main():
         print("Usage: uvicorn server:app --reload --host 0.0.0.0 --port 8082")
         print("")
         print("Required environment variables:")
-        print("  GEMINI_API_KEY - Your Google Gemini API key")
+        print("  API_KEYS - A JSON array of your Google Gemini API keys (e.g., '[\"key1\", \"key2\"]')")
+        print("  GEMINI_API_KEY (deprecated) - A single key or comma-separated list of keys.")
         print("")
         print("Optional environment variables:")
         print(f"  BIG_MODEL - Big model name (default: gemini-1.5-pro-latest)")
