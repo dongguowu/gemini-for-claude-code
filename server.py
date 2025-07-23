@@ -1,6 +1,30 @@
 """
 A FastAPI proxy to translate Anthropic Claude API requests to Google Gemini API requests.
 This allows using Claude-compatible clients (like the Claude Code CLI) with Gemini models.
+
+ARCHITECTURE ANALYSIS:
+===================
+
+This server acts as a translation layer between two different LLM API formats:
+- Input: Anthropic Claude API format (used by Claude Code CLI and other clients)
+- Output: Google Gemini API format (via LiteLLM library)
+
+Key Components:
+1. Configuration Management (Config class): Handles API keys, model settings, operational parameters
+2. Model Management (ModelManager class): Maps Claude model names (sonnet, haiku) to Gemini models
+3. Request/Response Translation: Bidirectional conversion between API formats
+4. Streaming Support: Robust streaming with error recovery for Gemini's malformed chunks
+5. Error Handling: Enhanced error classification for better user experience
+
+Notable Features:
+- Multiple API Key Support: Round-robin rotation with automatic failover
+- Tool/Function Calling: Full support with schema cleaning for Gemini compatibility  
+- Streaming Recovery: Handles Gemini's occasional malformed JSON chunks in streaming responses
+- Health Monitoring: Comprehensive status endpoints and logging
+- Production Ready: Proper configuration, logging, and error recovery mechanisms
+
+The code includes extensive workarounds for Gemini API quirks, particularly around
+streaming malformed chunks and tool schema validation requirements.
 """
 from fastapi import FastAPI, Request, HTTPException
 import uvicorn
@@ -61,7 +85,11 @@ class Constants:
     DELTA_INPUT_JSON = "input_json_delta"
 
 # Application Configuration
-# Loads and manages all configuration settings from environment variables.
+# ANALYSIS: This class is the central configuration hub for the entire application.
+# It handles both legacy (GEMINI_API_KEY) and modern (API_KEYS) configuration formats,
+# implements round-robin API key rotation for load balancing, and provides automatic
+# failover when API keys fail. The configuration is defensive with validation and
+# sensible defaults to prevent common deployment issues.
 class Config:
     def __init__(self):
         """Loads configuration from environment variables."""
@@ -140,8 +168,11 @@ litellm.request_timeout = config.request_timeout
 litellm.num_retries = config.max_retries
 
 # Model Management
-# Handles mapping of Anthropic-style model names (e.g., "sonnet", "haiku")
-# to specific Gemini model identifiers and validates model names.
+# ANALYSIS: This class handles the complex mapping between different model naming conventions.
+# It supports multiple model formats (anthropic/, openai/, gemini/) and maps Claude-style
+# aliases (haiku, sonnet, opus) to specific Gemini models. The dynamic model list allows
+# for easy addition of new Gemini models without code changes. This abstraction layer
+# makes the proxy flexible and maintainable as new models are released.
 class ModelManager:
     def __init__(self, config):
         self.config = config
@@ -231,7 +262,11 @@ for uvicorn_logger in ["uvicorn", "uvicorn.access", "uvicorn.error"]:
 app = FastAPI(title="Gemini-to-Claude API Proxy", version="2.5.0")
 
 # Enhanced Error Classification
-# Provides more user-friendly and specific error messages for common Gemini API errors.
+# ANALYSIS: This function is crucial for user experience as it translates cryptic Gemini API
+# errors into actionable messages. It handles common issues like streaming parsing errors,
+# tool schema validation failures, rate limiting, and authentication problems. The specific
+# handling of "expecting property name" errors addresses a known Gemini streaming bug.
+# This error classification significantly reduces support burden and improves debugging.
 def classify_gemini_error(error_msg: str) -> str:
     """Provide specific error guidance for common Gemini issues."""
     error_lower = error_msg.lower()
@@ -275,8 +310,11 @@ def classify_gemini_error(error_msg: str) -> str:
     return error_msg
 
 # Gemini Tool Schema Cleaner
-# Recursively removes fields from JSON schemas that are unsupported by the Gemini API
-# to prevent validation errors when using tools.
+# ANALYSIS: This is a critical compatibility function that addresses Gemini's restrictive
+# tool schema requirements. While OpenAI and Anthropic APIs accept various JSON schema
+# features, Gemini rejects many of them. This function recursively removes unsupported
+# fields like "additionalProperties", "default", and most "format" types except "enum"
+# and "date-time". Without this cleaning, tool calls would fail with validation errors.
 def clean_gemini_schema(schema: Any) -> Any:
     """Recursively removes unsupported fields from a JSON schema for Gemini compatibility."""
     if isinstance(schema, dict):
@@ -301,8 +339,13 @@ def clean_gemini_schema(schema: Any) -> Any:
     return schema
 
 # Pydantic Models for API Request/Response Validation
-# These models define the expected structure of incoming requests and outgoing responses,
-# ensuring data consistency and providing automatic validation.
+# ANALYSIS: These models serve multiple purposes beyond simple validation:
+# 1. API Documentation: FastAPI auto-generates OpenAPI specs from these models
+# 2. Type Safety: Ensures data consistency throughout the application
+# 3. Validation: Automatic validation with clear error messages
+# 4. Model Mapping: The @field_validator decorator handles model name translation
+# The models closely mirror Anthropic's API structure while adding internal fields
+# like original_model for preserving the client's requested model name.
 class ContentBlockText(BaseModel):
     type: Literal["text"]
     text: str
@@ -407,8 +450,11 @@ class MessagesResponse(BaseModel):
     usage: Usage
 
 # Tool Result Parsing
-# This utility function standardizes the 'content' from a tool result block
-# into a simple string, which is the format Gemini expects.
+# ANALYSIS: This utility function addresses the complexity of tool result formats.
+# Anthropic's API allows tool results to be strings, lists of content blocks, or
+# complex nested structures. Gemini expects simple strings. This function normalizes
+# all these formats into a string that Gemini can process, handling edge cases like
+# empty content, nested objects, and malformed data gracefully.
 def parse_tool_result_content(content):
     """Parse and normalize tool result content into a string format."""
     if content is None:
@@ -448,8 +494,15 @@ def parse_tool_result_content(content):
         return "Unparseable content"
 
 # Anthropic to LiteLLM (Gemini) Request Conversion
-# Translates the incoming Anthropic-formatted request payload into the format
-# required by LiteLLM to call the Gemini API.
+# ANALYSIS: This is the core translation function that converts Claude API requests
+# to Gemini format. Key challenges addressed:
+# 1. Message Role Handling: Gemini requires specific message ordering and role types
+# 2. Tool Calls: Complex conversion between Anthropic's content blocks and Gemini's tool_calls
+# 3. System Messages: Gemini handles system messages differently than Anthropic
+# 4. Content Types: Base64 image handling, tool results, and mixed content blocks
+# 5. Tool Schema Cleaning: Removes Gemini-incompatible schema features
+# The function handles edge cases like empty messages, malformed tool calls, and
+# maintains message context integrity crucial for multi-turn conversations.
 def convert_anthropic_to_litellm(anthropic_request: MessagesRequest) -> Dict[str, Any]:
     """Convert Anthropic API request format to LiteLLM format for Gemini."""
     litellm_messages = []
@@ -634,7 +687,15 @@ def convert_anthropic_to_litellm(anthropic_request: MessagesRequest) -> Dict[str
     return litellm_request
 
 # LiteLLM (Gemini) to Anthropic Response Conversion
-# Converts a non-streaming response from LiteLLM back into the Anthropic message format.
+# ANALYSIS: This function handles the reverse translation from Gemini responses back
+# to Anthropic format. Key challenges:
+# 1. Response Format Variations: Gemini can return responses in different formats
+#    (ModelResponse objects vs dictionaries) depending on the LiteLLM version
+# 2. Tool Call Extraction: Converting Gemini's tool_calls back to Anthropic's content blocks
+# 3. Usage Tracking: Proper token counting for billing and logging
+# 4. Error Recovery: Graceful handling when response parsing fails
+# 5. Stop Reason Mapping: Converting Gemini's finish_reason to Anthropic's stop_reason
+# The function is defensive, providing fallback values when data is missing or malformed.
 def convert_litellm_to_anthropic(litellm_response, original_request: MessagesRequest) -> MessagesResponse:
     """Convert LiteLLM (Gemini) response back to Anthropic API format."""
     try:
@@ -757,9 +818,17 @@ def convert_litellm_to_anthropic(litellm_response, original_request: MessagesReq
         )
 
 # Streaming Response Handler with Error Recovery
-# This asynchronous generator handles the server-sent events (SSE) for streaming responses.
-# It includes robust logic to parse, process, and recover from malformed JSON chunks
-# that can sometimes be sent by the Gemini API during streaming.
+# ANALYSIS: This is the most complex function in the codebase, handling Gemini's
+# notorious streaming reliability issues. Key features:
+# 1. Malformed Chunk Detection: Identifies and skips invalid JSON chunks that Gemini
+#    occasionally sends, preventing stream termination
+# 2. Chunk Buffering: Accumulates partial JSON data until complete objects are formed
+# 3. Error Recovery: Implements retry logic with exponential backoff for transient errors
+# 4. SSE Format: Properly formats server-sent events for Claude Code CLI compatibility
+# 5. State Management: Tracks tool calls, text accumulation, and usage statistics
+# 6. Graceful Degradation: Falls back to non-streaming if streaming repeatedly fails
+# The function includes extensive error handling for the "expecting property name"
+# error that frequently occurs with Gemini's streaming API.
 async def handle_streaming_with_recovery(response_generator, original_request: MessagesRequest, input_tokens: int):
     """Enhanced streaming handler with robust error recovery for malformed chunks."""
     message_id = f"msg_{uuid.uuid4().hex[:24]}"
@@ -1098,8 +1167,16 @@ async def log_requests(request: Request, call_next):
     return response
 
 # Main endpoint for processing messages.
-# This is the primary endpoint that Claude-compatible clients will interact with.
-# It handles both streaming and non-streaming requests, converting them for the Gemini API.
+# ANALYSIS: This is the primary endpoint that handles all Claude API message requests.
+# It implements several sophisticated patterns:
+# 1. Request Validation: Uses Pydantic models for automatic validation and type conversion
+# 2. API Key Rotation: Cycles through multiple API keys with automatic failover
+# 3. Streaming with Fallback: Attempts streaming first, falls back to non-streaming on failure
+# 4. Retry Logic: Implements exponential backoff for transient errors
+# 5. Error Classification: Provides specific error messages for different failure types
+# 6. Usage Tracking: Logs request details for monitoring and debugging
+# The endpoint handles both streaming and non-streaming requests, with extensive
+# error recovery to ensure high availability despite Gemini API instability.
 @app.post("/v1/messages")
 async def create_message(request: MessagesRequest, raw_request: Request):
     try:
@@ -1251,7 +1328,14 @@ async def create_message(request: MessagesRequest, raw_request: Request):
         raise HTTPException(status_code=500, detail=error_msg)
 
 # Endpoint to count the number of tokens in a request.
-# This is useful for clients that want to estimate costs or stay within token limits.
+# ANALYSIS: This endpoint provides token counting functionality crucial for:
+# 1. Cost Estimation: Clients can estimate costs before making actual requests
+# 2. Rate Limiting: Applications can stay within token limits
+# 3. Request Planning: Large requests can be split based on token counts
+# 4. Debugging: Developers can understand token usage patterns
+# The implementation reuses the same conversion logic as the main endpoint to ensure
+# accurate token counts that match actual API usage. This is particularly important
+# given the complexity of tool schemas and multi-modal content.
 @app.post("/v1/messages/count_tokens")
 async def count_tokens(request: TokenCountRequest, raw_request: Request):
     try:
@@ -1289,7 +1373,15 @@ async def count_tokens(request: TokenCountRequest, raw_request: Request):
         raise HTTPException(status_code=500, detail=f"Error counting tokens: {error_msg}")
 
 # Health check endpoint.
-# Provides the operational status of the proxy, including configuration and API key status.
+# ANALYSIS: This endpoint is essential for production deployments and monitoring.
+# It provides comprehensive status information including:
+# 1. API Key Status: Number of configured vs failed keys
+# 2. Configuration Health: Validation of critical settings
+# 3. Streaming Configuration: Current streaming policy settings
+# 4. Service Availability: Whether the service is ready to handle requests
+# The endpoint is designed to be lightweight for frequent health checks while
+# providing detailed information for debugging. It's commonly used by load balancers,
+# monitoring systems, and deployment orchestrators.
 @app.get("/health")
 async def health_check():
     try:
@@ -1321,7 +1413,15 @@ async def health_check():
         )
 
 # API connectivity test endpoint.
-# Performs a live test against the Gemini API to verify the API key and network connection.
+# ANALYSIS: This endpoint performs live testing of the Gemini API connection,
+# providing more detailed diagnostics than the basic health check. Key features:
+# 1. Live API Testing: Makes actual API calls to verify connectivity
+# 2. API Key Validation: Tests keys in real-world conditions
+# 3. Error Diagnostics: Provides specific error messages and troubleshooting tips
+# 4. Network Validation: Confirms internet connectivity to Google's servers
+# This endpoint is particularly useful during initial setup, troubleshooting
+# connectivity issues, and validating configuration changes. It helps distinguish
+# between configuration errors, network issues, and API problems.
 @app.get("/test-connection")
 async def test_connection():
     """Test API connectivity to Gemini"""
@@ -1393,7 +1493,15 @@ async def test_connection():
             )
 
 # Root endpoint.
-# Returns basic information about the proxy, its version, and available endpoints.
+# ANALYSIS: This endpoint serves as the service discovery and documentation endpoint.
+# It provides essential information for:
+# 1. Service Identification: Version and status information
+# 2. Configuration Overview: Current model mappings and limits
+# 3. API Discovery: Available endpoints for client integration
+# 4. Operational Status: Current streaming and configuration settings
+# This endpoint is often the first one clients or administrators access to understand
+# the service capabilities and current configuration. It's designed to be informative
+# without exposing sensitive details like API keys.
 @app.get("/")
 async def root():
     return {
@@ -1422,7 +1530,14 @@ async def root():
 # --- Utility Functions ---
 
 # Simple logging utilities
-# Provides colorized, human-readable logging for TTY environments.
+# ANALYSIS: These utilities provide enhanced logging capabilities for better debugging
+# and monitoring. Key features:
+# 1. TTY Detection: Provides colorized output when running in interactive terminals
+# 2. Request Tracking: Logs essential request details for debugging and monitoring
+# 3. Performance Monitoring: Includes timing and usage information
+# 4. Production Friendly: Falls back to plain text for non-TTY environments
+# The colorized logging significantly improves readability during development and
+# troubleshooting, while maintaining compatibility with log aggregation systems.
 class Colors:
     CYAN = "\033[96m"
     BLUE = "\033[94m" 
@@ -1462,6 +1577,13 @@ def log_request_beautifully(method: str, path: str, requested_model: str,
 
 def validate_startup():
     """Validate essential configurations at startup to ensure the server can run."""
+    # ANALYSIS: This function performs critical startup validation to prevent runtime
+    # failures and provide early feedback on configuration issues. It checks:
+    # 1. API Key Configuration: Ensures keys are present and properly formatted
+    # 2. Network Connectivity: Basic internet connectivity test
+    # 3. Environment Validation: Confirms essential settings are reasonable
+    # The function is designed to fail fast and provide actionable error messages,
+    # preventing deployment of misconfigured instances and reducing troubleshooting time.
     """Validate configuration and connectivity on startup"""
     print("🔍 Validating startup configuration...")
     
@@ -1485,6 +1607,13 @@ def validate_startup():
 
 def main():
     """Main entry point for running the server from the command line."""
+    # ANALYSIS: This function serves as the application's entry point and provides:
+    # 1. Help Documentation: Comprehensive usage instructions and environment variables
+    # 2. Startup Validation: Ensures configuration is valid before starting the server
+    # 3. Configuration Summary: Displays current settings for verification
+    # 4. Server Initialization: Starts the uvicorn server with proper settings
+    # The function includes extensive help text that serves as living documentation,
+    # making the application self-documenting and reducing setup friction for new users.
     if len(sys.argv) > 1 and sys.argv[1] == "--help":
         print("Enhanced Gemini-to-Claude API Proxy v2.5.0")
         print("")
@@ -1542,6 +1671,11 @@ def main():
     )
 
 # --- Server Startup ---
+# ANALYSIS: The server startup logic includes proper configuration validation and
+# graceful error handling. The conditional execution ensures the server only starts
+# when run directly (not when imported as a module), following Python best practices.
+# This pattern allows the module to be imported for testing while providing a
+# standalone server capability.
 
 if __name__ == "__main__":
     main()
