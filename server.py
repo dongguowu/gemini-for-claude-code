@@ -85,6 +85,7 @@ class Config:
             raise ValueError("API key list cannot be empty.")
             
         self.key_iterator = itertools.cycle(self.gemini_api_keys)
+        self.unused_keys = []
         
         self.big_model = os.environ.get("BIG_MODEL", "gemini-1.5-pro-latest")
         self.small_model = os.environ.get("SMALL_MODEL", "gemini-1.5-flash-latest")
@@ -104,7 +105,17 @@ class Config:
         
     def get_next_api_key(self):
         """Get the next API key from the list in a round-robin fashion."""
+        if not self.gemini_api_keys:
+            return None
         return next(self.key_iterator)
+
+    def handle_api_key_error(self, key):
+        """Move a failed API key to the unused list."""
+        if key in self.gemini_api_keys:
+            self.gemini_api_keys.remove(key)
+            self.unused_keys.append(key)
+            self.key_iterator = itertools.cycle(self.gemini_api_keys) if self.gemini_api_keys else itertools.cycle([])
+            logger.warning(f"API key ending in ...{key[-4:]} failed and has been moved to the unused list.")
 
     def validate_api_keys(self):
         """Basic validation to check if API keys seem to be in the correct format."""
@@ -1105,7 +1116,6 @@ async def create_message(request: MessagesRequest, raw_request: Request):
 
         # Convert request
         litellm_request = convert_anthropic_to_litellm(request)
-        litellm_request["api_key"] = config.get_next_api_key()
         
         # Log request details
         num_tools = len(request.tools) if request.tools else 0
@@ -1117,91 +1127,113 @@ async def create_message(request: MessagesRequest, raw_request: Request):
             num_tools, 200
         )
 
-        # Enhanced streaming with better retry logic
-        if request.stream:
-            # Pre-calculate input tokens as they are not available in the stream.
-            # We use litellm.token_counter as it's the only way to get a non-zero, close-to-accurate count of input tokens for streaming calls.
-            # While tokenizer drift is a concern, this is a practical trade-off for useful logging and cost estimation.
-            try:
-                input_tokens = litellm.token_counter(
-                    model=litellm_request["model"],
-                    messages=litellm_request["messages"]
-                )
-            except Exception:
-                input_tokens = 0
+        # Try API keys until one works or all have been tried
+        while True:
+            api_key = config.get_next_api_key()
+            if not api_key:
+                logger.error("All API keys have failed.")
+                raise HTTPException(status_code=500, detail="All API keys failed.")
 
-            streaming_retry_count = 0
-            max_retries = config.max_streaming_retries
+            litellm_request["api_key"] = api_key
             
-            while streaming_retry_count <= max_retries:
-                try:
-                    logger.debug(f"Attempting streaming (attempt {streaming_retry_count + 1}/{max_retries + 1})")
+            try:
+                # Enhanced streaming with better retry logic
+                if request.stream:
+                    # Pre-calculate input tokens as they are not available in the stream.
+                    # We use litellm.token_counter as it's the only way to get a non-zero, close-to-accurate count of input tokens for streaming calls.
+                    # While tokenizer drift is a concern, this is a practical trade-off for useful logging and cost estimation.
+                    try:
+                        input_tokens = litellm.token_counter(
+                            model=litellm_request["model"],
+                            messages=litellm_request["messages"]
+                        )
+                    except Exception:
+                        input_tokens = 0
+
+                    streaming_retry_count = 0
+                    max_retries = config.max_streaming_retries
                     
-                    # Add slight delay between retries
-                    if streaming_retry_count > 0:
-                        delay = min(0.5 * (2 ** streaming_retry_count), 2.0)  # Exponential backoff, max 2s
-                        logger.debug(f"Waiting {delay}s before retry...")
-                        await asyncio.sleep(delay)
-                    
-                    response_generator = await litellm.acompletion(**litellm_request)
-                    
-                    return StreamingResponse(
-                        handle_streaming_with_recovery(response_generator, request, input_tokens),
-                        media_type="text/event-stream",
-                        headers={
-                            "Cache-Control": "no-cache",
-                            "Connection": "keep-alive",
-                            "X-Accel-Buffering": "no",
-                            "Access-Control-Allow-Origin": "*",
-                            "Access-Control-Allow-Headers": "*"
-                        }
-                    )
-                    
-                except (litellm.exceptions.APIConnectionError, RuntimeError) as streaming_error:
-                    streaming_retry_count += 1
-                    error_msg = str(streaming_error)
-                    
-                    # Check for the specific malformed chunk error
-                    if ("Error parsing chunk" in error_msg and 
-                        "Expecting property name enclosed in double quotes" in error_msg):
-                        
-                        if streaming_retry_count <= max_retries:
-                            logger.warning(f"Gemini streaming chunk parsing error (attempt {streaming_retry_count}/{max_retries + 1}), retrying...")
-                            continue
-                        else:
-                            logger.error(f"Gemini streaming failed after {max_retries + 1} attempts due to malformed chunks, falling back to non-streaming")
-                            break
-                    else:
-                        # Other streaming errors - could be connection issues
-                        if streaming_retry_count <= max_retries:
-                            logger.warning(f"Streaming error (attempt {streaming_retry_count}/{max_retries + 1}): {error_msg}")
-                            continue
-                        else:
-                            logger.error(f"Streaming failed after {max_retries + 1} attempts, falling back to non-streaming")
-                            break
+                    while streaming_retry_count <= max_retries:
+                        try:
+                            logger.debug(f"Attempting streaming (attempt {streaming_retry_count + 1}/{max_retries + 1})")
                             
-                except Exception as unexpected_error:
-                    streaming_retry_count += 1
-                    logger.error(f"Unexpected streaming error (attempt {streaming_retry_count}/{max_retries + 1}): {unexpected_error}")
+                            # Add slight delay between retries
+                            if streaming_retry_count > 0:
+                                delay = min(0.5 * (2 ** streaming_retry_count), 2.0)  # Exponential backoff, max 2s
+                                logger.debug(f"Waiting {delay}s before retry...")
+                                await asyncio.sleep(delay)
+                            
+                            response_generator = await litellm.acompletion(**litellm_request)
+                            
+                            return StreamingResponse(
+                                handle_streaming_with_recovery(response_generator, request, input_tokens),
+                                media_type="text/event-stream",
+                                headers={
+                                    "Cache-Control": "no-cache",
+                                    "Connection": "keep-alive",
+                                    "X-Accel-Buffering": "no",
+                                    "Access-Control-Allow-Origin": "*",
+                                    "Access-Control-Allow-Headers": "*"
+                                }
+                            )
+                            
+                        except (litellm.exceptions.APIConnectionError, RuntimeError) as streaming_error:
+                            streaming_retry_count += 1
+                            error_msg = str(streaming_error)
+                            
+                            # Check for the specific malformed chunk error
+                            if ("Error parsing chunk" in error_msg and 
+                                "Expecting property name enclosed in double quotes" in error_msg):
+                                
+                                if streaming_retry_count <= max_retries:
+                                    logger.warning(f"Gemini streaming chunk parsing error (attempt {streaming_retry_count}/{max_retries + 1}), retrying...")
+                                    continue
+                                else:
+                                    logger.error(f"Gemini streaming failed after {max_retries + 1} attempts due to malformed chunks, falling back to non-streaming")
+                                    break
+                            else:
+                                # Other streaming errors - could be connection issues
+                                if streaming_retry_count <= max_retries:
+                                    logger.warning(f"Streaming error (attempt {streaming_retry_count}/{max_retries + 1}): {error_msg}")
+                                    continue
+                                else:
+                                    logger.error(f"Streaming failed after {max_retries + 1} attempts, falling back to non-streaming")
+                                    break
+                                    
+                        except Exception as unexpected_error:
+                            streaming_retry_count += 1
+                            logger.error(f"Unexpected streaming error (attempt {streaming_retry_count}/{max_retries + 1}): {unexpected_error}")
+                            
+                            if streaming_retry_count <= max_retries:
+                                continue
+                            else:
+                                logger.error(f"Streaming failed after {max_retries + 1} attempts due to unexpected errors, falling back to non-streaming")
+                                break
                     
-                    if streaming_retry_count <= max_retries:
-                        continue
-                    else:
-                        logger.error(f"Streaming failed after {max_retries + 1} attempts due to unexpected errors, falling back to non-streaming")
-                        break
+                    # If we get here, streaming failed - fall back to non-streaming
+                    logger.info("Falling back to non-streaming mode")
+                    litellm_request["stream"] = False
+                
+                # Non-streaming path (or fallback)
+                if not request.stream or litellm_request.get("stream") == False:
+                    start_time = time.time()
+                    litellm_response = await litellm.acompletion(**litellm_request)
+                    logger.debug(f"✅ Response received: Model={litellm_request.get('model')}, Time={time.time() - start_time:.2f}s")
+                    
+                    anthropic_response = convert_litellm_to_anthropic(litellm_response, request)
+                    return anthropic_response
             
-            # If we get here, streaming failed - fall back to non-streaming
-            logger.info("Falling back to non-streaming mode")
-            litellm_request["stream"] = False
-        
-        # Non-streaming path (or fallback)
-        if not request.stream or litellm_request.get("stream") == False:
-            start_time = time.time()
-            litellm_response = await litellm.acompletion(**litellm_request)
-            logger.debug(f"✅ Response received: Model={litellm_request.get('model')}, Time={time.time() - start_time:.2f}s")
-            
-            anthropic_response = convert_litellm_to_anthropic(litellm_response, request)
-            return anthropic_response
+            except litellm.exceptions.APIError as e:
+                error_msg = classify_gemini_error(str(e))
+                if "api key" in error_msg.lower():
+                    config.handle_api_key_error(api_key)
+                    continue
+                logger.error(f"LiteLLM API Error: {e}")
+                raise HTTPException(status_code=getattr(e, 'status_code', 500), detail=error_msg)
+            except Exception as e:
+                logger.error(f"Unhandled exception with key ...{api_key[-4:]}: {e}")
+                config.handle_api_key_error(api_key)
+                continue
 
     except litellm.exceptions.APIError as e:
         logger.error(f"LiteLLM API Error: {e}")
@@ -1266,6 +1298,7 @@ async def health_check():
             "timestamp": datetime.now().isoformat(),
             "version": "2.5.0",
             "gemini_api_keys_configured": len(config.gemini_api_keys),
+            "unused_keys": len(config.unused_keys),
             "api_keys_valid": config.validate_api_keys(),
             "streaming_config": {
                 "force_disabled": config.force_disable_streaming,
@@ -1292,55 +1325,72 @@ async def health_check():
 @app.get("/test-connection")
 async def test_connection():
     """Test API connectivity to Gemini"""
-    try:
-        # Simple test request to verify API connectivity
-        test_response = await litellm.acompletion(
-            model="gemini/gemini-1.5-flash-latest",
-            messages=[{"role": "user", "content": "Hello"}],
-            max_tokens=5,
-            api_key=config.get_next_api_key()
-        )
-        
-        return {
-            "status": "success",
-            "message": "Successfully connected to Gemini API",
-            "model_used": "gemini-1.5-flash-latest",
-            "timestamp": datetime.now().isoformat(),
-            "response_id": getattr(test_response, 'id', 'unknown')
-        }
-        
-    except litellm.exceptions.APIError as e:
-        logger.error(f"API connectivity test failed: {e}")
-        return JSONResponse(
-            status_code=503,
-            content={
-                "status": "failed",
-                "error_type": "API Error",
-                "message": classify_gemini_error(str(e)),
+    while True:
+        api_key = config.get_next_api_key()
+        if not api_key:
+            logger.error("All API keys have failed.")
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "status": "failed",
+                    "error_type": "API Error",
+                    "message": "All API keys failed.",
+                    "timestamp": datetime.now().isoformat()
+                }
+            )
+        try:
+            # Simple test request to verify API connectivity
+            test_response = await litellm.acompletion(
+                model="gemini/gemini-1.5-flash-latest",
+                messages=[{"role": "user", "content": "Hello"}],
+                max_tokens=5,
+                api_key=api_key
+            )
+            
+            return {
+                "status": "success",
+                "message": "Successfully connected to Gemini API",
+                "model_used": "gemini-1.5-flash-latest",
                 "timestamp": datetime.now().isoformat(),
-                "suggestions": [
-                    "Check your GEMINI_API_KEY is valid",
-                    "Verify your API key has the necessary permissions",
-                    "Check if you have reached rate limits"
-                ]
+                "response_id": getattr(test_response, 'id', 'unknown')
             }
-        )
-    except Exception as e:
-        logger.error(f"Connection test failed: {e}")
-        return JSONResponse(
-            status_code=503,
-            content={
-                "status": "failed",
-                "error_type": "Connection Error", 
-                "message": classify_gemini_error(str(e)),
-                "timestamp": datetime.now().isoformat(),
-                "suggestions": [
-                    "Check your internet connection",
-                    "Verify firewall settings allow HTTPS traffic",
-                    "Try again in a few moments"
-                ]
-            }
-        )
+            
+        except litellm.exceptions.APIError as e:
+            error_msg = classify_gemini_error(str(e))
+            if "api key" in error_msg.lower():
+                config.handle_api_key_error(api_key)
+                continue
+            logger.error(f"API connectivity test failed: {e}")
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "status": "failed",
+                    "error_type": "API Error",
+                    "message": error_msg,
+                    "timestamp": datetime.now().isoformat(),
+                    "suggestions": [
+                        "Check your GEMINI_API_KEY is valid",
+                        "Verify your API key has the necessary permissions",
+                        "Check if you have reached rate limits"
+                    ]
+                }
+            )
+        except Exception as e:
+            logger.error(f"Connection test failed: {e}")
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "status": "failed",
+                    "error_type": "Connection Error", 
+                    "message": classify_gemini_error(str(e)),
+                    "timestamp": datetime.now().isoformat(),
+                    "suggestions": [
+                        "Check your internet connection",
+                        "Verify firewall settings allow HTTPS traffic",
+                        "Try again in a few moments"
+                    ]
+                }
+            )
 
 # Root endpoint.
 # Returns basic information about the proxy, its version, and available endpoints.
