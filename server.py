@@ -115,8 +115,8 @@ class Config:
         self.key_iterator = itertools.cycle(self.gemini_api_keys)
         self.unused_keys = []
         
-        self.big_model = os.environ.get("BIG_MODEL", "gemini-1.5-pro-latest")
-        self.small_model = os.environ.get("SMALL_MODEL", "gemini-1.5-flash-latest")
+        self.big_model = os.environ.get("BIG_MODEL", "gemini-2.5-pro")
+        self.small_model = os.environ.get("SMALL_MODEL", "gemini-2.5-flash")
         self.host = os.environ.get("HOST", "0.0.0.0")
         self.port = int(os.environ.get("PORT", "8082"))
         self.log_level = os.environ.get("LOG_LEVEL", "WARNING")
@@ -177,15 +177,19 @@ class ModelManager:
     def __init__(self, config):
         self.config = config
         self.base_gemini_models = [
-            "gemini-1.5-pro-latest",
-            "gemini-1.5-pro-preview-0514",
-            "gemini-1.5-flash-latest", 
-            "gemini-1.5-flash-preview-0514",
-            "gemini-pro",
-            "gemini-2.5-pro-preview-05-06",
-            "gemini-2.5-flash-preview-04-17",
-            "gemini-2.0-flash-exp",
-            "gemini-exp-1206"
+            # Gemini 2.5 Series (Latest - 2025)
+            "gemini-2.5-pro",                              # Stable, most powerful
+            "gemini-2.5-flash",                            # Stable, best price-performance
+            "gemini-2.5-flash-lite",                       # Stable, lowest latency/cost
+            "gemini-2.5-pro-preview-06-05",               # Preview with adaptive thinking
+            "gemini-2.5-flash-preview-05-20",             # Latest flash preview
+            "gemini-2.5-pro-preview-tts",                 # TTS support
+            "gemini-2.5-flash-preview-tts",               # Flash TTS support
+            "gemini-2.5-flash-lite-preview-06-17",        # Flash-lite preview
+            "gemini-2.5-pro-exp-03-25",                   # Experimental
+            "gemini-2.5-flash-thinking-exp-01-21",        # Thinking experimental
+            "gemini-2.5-flash-preview-native-audio-dialog", # Native audio
+            "gemini-2.5-flash-exp-native-audio-thinking-dialog", # Audio thinking
         ]
         self._gemini_models = set(self.base_gemini_models)
         self._add_env_models()
@@ -1624,8 +1628,8 @@ def main():
         print("  GEMINI_API_KEY (deprecated) - A single key or comma-separated list of keys.")
         print("")
         print("Optional environment variables:")
-        print(f"  BIG_MODEL - Big model name (default: gemini-1.5-pro-latest)")
-        print(f"  SMALL_MODEL - Small model name (default: gemini-1.5-flash-latest)")
+        print(f"  BIG_MODEL - Big model name (default: gemini-2.5-pro)")
+        print(f"  SMALL_MODEL - Small model name (default: gemini-2.5-flash)")
         print(f"  HOST - Server host (default: 0.0.0.0)")
         print(f"  PORT - Server port (default: 8082)")
         print(f"  LOG_LEVEL - Logging level (default: WARNING)")
