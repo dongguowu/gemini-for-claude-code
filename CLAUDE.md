@@ -1,5 +1,7 @@
 # CLAUDE.md
 
+Please help me improve my English. Before answering a question, first correct my grammar and phrasing. Then, explain your corrections simply. After clarifying the question, ask me to type 'yes' to continue. If I type 'en', please provide more examples of the grammatical mistakes I just made.
+
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## Project Overview
