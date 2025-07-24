@@ -22,3 +22,6 @@ dist/
 .vscode/
 *.swp
 *.swo
+
+# English learning files
+english_corrections.md

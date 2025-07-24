@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-Please read english_corrections.md first, this task will focus on improving my English.
+Please read english_corrections.md first.
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
