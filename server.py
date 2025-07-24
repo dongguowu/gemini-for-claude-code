@@ -84,6 +84,32 @@ class Constants:
     DELTA_TEXT = "text_delta"
     DELTA_INPUT_JSON = "input_json_delta"
 
+# Logging Configuration
+logging.basicConfig(
+    level=os.environ.get("LOG_LEVEL", "WARNING").upper(),
+    format='%(asctime)s - %(levelname)s - %(message)s',
+)
+logger = logging.getLogger(__name__)
+
+# Simple message filter
+class SimpleMessageFilter(logging.Filter):
+    def filter(self, record):
+        blocked_phrases = [
+            "LiteLLM completion()",
+            "HTTP Request:",
+            "cost_calculator"
+        ]
+        if hasattr(record, 'msg') and isinstance(record.msg, str):
+            return not any(phrase in record.msg for phrase in blocked_phrases)
+        return True
+
+root_logger = logging.getLogger()
+root_logger.addFilter(SimpleMessageFilter())
+
+# Configure uvicorn to be quieter
+for uvicorn_logger in ["uvicorn", "uvicorn.access", "uvicorn.error"]:
+    logging.getLogger(uvicorn_logger).setLevel(logging.WARNING)
+
 # Application Configuration
 # ANALYSIS: This class is the central configuration hub for the entire application.
 # It handles both legacy (GEMINI_API_KEY) and modern (API_KEYS) configuration formats,
@@ -238,34 +264,6 @@ class ModelManager:
 model_manager = ModelManager(config)
 
 # Logging Configuration
-logging.basicConfig(
-    level=getattr(logging, config.log_level.upper()),
-    format='%(asctime)s - %(levelname)s - %(message)s',
-)
-logger = logging.getLogger(__name__)
-
-# Simple message filter
-class SimpleMessageFilter(logging.Filter):
-    def filter(self, record):
-        blocked_phrases = [
-            "LiteLLM completion()",
-            "HTTP Request:",
-            "cost_calculator"
-        ]
-        if hasattr(record, 'msg') and isinstance(record.msg, str):
-            return not any(phrase in record.msg for phrase in blocked_phrases)
-        return True
-
-root_logger = logging.getLogger()
-root_logger.addFilter(SimpleMessageFilter())
-
-# Configure uvicorn to be quieter
-for uvicorn_logger in ["uvicorn", "uvicorn.access", "uvicorn.error"]:
-    logging.getLogger(uvicorn_logger).setLevel(logging.WARNING)
-
-app = FastAPI(title="Gemini-to-Claude API Proxy", version="2.5.0")
-
-# Enhanced Error Classification
 # ANALYSIS: This function is crucial for user experience as it translates cryptic Gemini API
 # errors into actionable messages. It handles common issues like streaming parsing errors,
 # tool schema validation failures, rate limiting, and authentication problems. The specific
@@ -838,11 +836,30 @@ async def handle_streaming_with_recovery(response_generator, original_request: M
     message_id = f"msg_{uuid.uuid4().hex[:24]}"
     
     # Send initial SSE events
-    yield f"event: {Constants.EVENT_MESSAGE_START}\ndata: {json.dumps({'type': Constants.EVENT_MESSAGE_START, 'message': {'id': message_id, 'type': 'message', 'role': Constants.ROLE_ASSISTANT, 'model': original_request.original_model or original_request.model, 'content': [], 'stop_reason': None, 'stop_sequence': None, 'usage': {'input_tokens': input_tokens, 'output_tokens': 0}}})}\n\n"
-    
-    yield f"event: {Constants.EVENT_CONTENT_BLOCK_START}\ndata: {json.dumps({'type': Constants.EVENT_CONTENT_BLOCK_START, 'index': 0, 'content_block': {'type': Constants.CONTENT_TEXT, 'text': ''}})}\n\n"
-    
-    yield f"event: {Constants.EVENT_PING}\ndata: {json.dumps({'type': Constants.EVENT_PING})}\n\n"
+    message_start_data = {
+        'type': Constants.EVENT_MESSAGE_START,
+        'message': {
+            'id': message_id,
+            'type': 'message',
+            'role': Constants.ROLE_ASSISTANT,
+            'model': original_request.original_model or original_request.model,
+            'content': [],
+            'stop_reason': None,
+            'stop_sequence': None,
+            'usage': {'input_tokens': input_tokens, 'output_tokens': 0}
+        }
+    }
+    yield f"event: {Constants.EVENT_MESSAGE_START}\ndata: {json.dumps(message_start_data)}\n\n"
+
+    content_block_start_data = {
+        'type': Constants.EVENT_CONTENT_BLOCK_START,
+        'index': 0,
+        'content_block': {'type': Constants.CONTENT_TEXT, 'text': ''}
+    }
+    yield f"event: {Constants.EVENT_CONTENT_BLOCK_START}\ndata: {json.dumps(content_block_start_data)}\n\n"
+
+    ping_data = {'type': Constants.EVENT_PING}
+    yield f"event: {Constants.EVENT_PING}\ndata: {json.dumps(ping_data)}\n\n"
 
     # Streaming state management
     all_chunks = []
@@ -1064,7 +1081,15 @@ async def handle_streaming_with_recovery(response_generator, original_request: M
                         
                         if tc_chunk.function.arguments:
                             current_tool_calls[tool_call_id]["args_buffer"] += tc_chunk.function.arguments
-                            yield f"event: {Constants.EVENT_CONTENT_BLOCK_DELTA}\ndata: {json.dumps({'type': Constants.EVENT_CONTENT_BLOCK_DELTA, 'index': current_tool_calls[tool_call_id]['index'], 'delta': {'type': Constants.DELTA_INPUT_JSON, 'partial_json': tc_chunk.function.arguments}})}\n\n"
+                            delta_data = {
+                                'type': Constants.EVENT_CONTENT_BLOCK_DELTA,
+                                'index': current_tool_calls[tool_call_id]['index'],
+                                'delta': {
+                                    'type': Constants.DELTA_INPUT_JSON,
+                                    'partial_json': tc_chunk.function.arguments
+                                }
+                            }
+                            yield f"event: {Constants.EVENT_CONTENT_BLOCK_DELTA}\ndata: {json.dumps(delta_data)}\n\n"
 
                 # Handle finish reason
                 if chunk_finish_reason:
@@ -1159,6 +1184,8 @@ async def handle_streaming_with_recovery(response_generator, original_request: M
         logger.error(f"Error sending final SSE events: {final_error}")
 
 # --- API Endpoints ---
+
+app = FastAPI(title="Gemini-to-Claude API Proxy", version="2.5.0")
 
 # Request Middleware
 # Logs basic information about every incoming HTTP request.
@@ -1624,7 +1651,7 @@ def main():
         print("Usage: uvicorn server:app --reload --host 0.0.0.0 --port 8082")
         print("")
         print("Required environment variables:")
-        print("  API_KEYS - A JSON array of your Google Gemini API keys (e.g., '[\"key1\", \"key2\"]')")
+        print('  API_KEYS - A JSON array of your Google Gemini API keys (e.g., \'["key1", "key2"]\')')
         print("  GEMINI_API_KEY (deprecated) - A single key or comma-separated list of keys.")
         print("")
         print("Optional environment variables:")
