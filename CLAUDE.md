@@ -78,4 +78,7 @@ The project does not have a dedicated test suite. The primary methods for testin
 -   **Logging:**
     -   Uses Python's `logging` module.
     -   Log level is configurable via the `LOG_LEVEL` environment variable.
-    -   Includes color-coded logging for TTY environments.
+    ## Git Workflow
+
+-   When creating commits, do not include the `Co-Authored-By` trailer.
+
