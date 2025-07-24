@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-Please read english_corrections.md first.
+Please help me improve my English. Before answering a question, first correct my grammar and phrasing. Then, explain your corrections simply. After clarifying the question, ask me to type 'yes' to continue. If I type 'en', please provide more examples of the grammatical mistakes I just made.
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
@@ -78,7 +78,4 @@ The project does not have a dedicated test suite. The primary methods for testin
 -   **Logging:**
     -   Uses Python's `logging` module.
     -   Log level is configurable via the `LOG_LEVEL` environment variable.
-    ## Git Workflow
-
--   When creating commits, do not include the `Co-Authored-By` trailer.
-
+    -   Includes color-coded logging for TTY environments.
