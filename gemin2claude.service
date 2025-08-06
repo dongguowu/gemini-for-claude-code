@@ -1,0 +1,14 @@
+[Unit]
+Description=Gemini to Claude Proxy Service
+After=network.target
+
+[Service]
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/mnt/smbshare/gemini-for-claude-code
+ExecStart=/mnt/smbshare/gemini-for-claude-code/.venv/bin/python /mnt/smbshare/gemini-for-claude-code/server.py
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
