@@ -17,6 +17,7 @@ This server acts as a bridge, enabling you to use **Claude Code** with Google's 
 - **Resilient Architecture**: Gracefully handles Gemini API instability with smart retry logic and fallback to non-streaming modes.
 - **Diagnostic Endpoints**: Includes `/health` and `/test-connection` for easier troubleshooting of your setup.
 - **Token Counting**: Offers a `/v1/messages/count_tokens` endpoint compatible with Claude Code.
+- **Custom Proxy Support**: Route requests through an OpenAI-compatible proxy instead of directly to Google's API.
 
 ## Recent Improvements (v2.5.0)
 
@@ -85,6 +86,12 @@ This server acts as a bridge, enabling you to use **Claude Code** with Google's 
     # Optional: Streaming control (use if experiencing issues)
     FORCE_DISABLE_STREAMING="false"     # Disable streaming globally
     EMERGENCY_DISABLE_STREAMING="false" # Emergency streaming disable
+
+    # Optional: Custom Proxy Settings (for OpenAI-compatible endpoints)
+    # If CUSTOM_PROXY_URL is set, all requests will be routed through it.
+    # GEMINI_API_KEY is not required if you use a proxy.
+    CUSTOM_PROXY_URL=""                # e.g., "https://api.openai.com/v1" or your custom proxy URL
+    CUSTOM_PROXY_API_KEY=""            # The API key for your proxy service
     ```
 
 5.  **Run the server**:
@@ -125,6 +132,39 @@ This server acts as a bridge, enabling you to use **Claude Code** with Google's 
     - This ensures Gemini receives important context and instructions for better assistance.
   
     - If Gemini still fucks up, ask it to read CLAUDE.md again. This might or might not help!
+
+## Using a Custom Proxy
+
+This server supports routing requests through any OpenAI-compatible API proxy instead of connecting directly to Google's Gemini API. This is useful for:
+- Using different model providers (like Azure OpenAI, or others that expose an OpenAI-compatible endpoint).
+- Adding custom logic, logging, or caching via your own proxy layer.
+- Environments where direct access to Google's APIs is restricted.
+
+### Configuration
+
+To use a custom proxy, set the following environment variables in your `.env` file:
+
+- **`CUSTOM_PROXY_URL`**: The base URL of your proxy endpoint (e.g., `https://my-proxy.com/v1`).
+- **`CUSTOM_PROXY_API_KEY`**: The API key for your proxy service.
+
+When `CUSTOM_PROXY_URL` is set, the `GEMINI_API_KEY` is no longer required. The server will automatically:
+1.  Route all completion requests to your proxy's URL.
+2.  Use the `CUSTOM_PROXY_API_KEY` for authentication.
+3.  Adjust model names by removing the `gemini/` prefix to ensure compatibility with standard OpenAI-like proxies.
+4.  Switch to an OpenAI-compatible tokenizer (`tiktoken`) for the `/v1/messages/count_tokens` endpoint.
+
+### Example
+
+```dotenv
+# .env file configured for a custom proxy
+CUSTOM_PROXY_URL="https://api.example.com/v1"
+CUSTOM_PROXY_API_KEY="sk-your-proxy-key"
+
+# GEMINI_API_KEY is now optional
+# GEMINI_API_KEY="" 
+```
+
+The server will now send requests to `https://api.example.com/v1` instead of Google's servers.
 
 ## How It Works: Powering Claude Code with Gemini
 

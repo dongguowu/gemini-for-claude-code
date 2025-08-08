@@ -57,8 +57,20 @@ class Constants:
 class Config:
     def __init__(self):
         self.gemini_api_key = os.environ.get("GEMINI_API_KEY")
-        if not self.gemini_api_key:
-            raise ValueError("GEMINI_API_KEY not found in environment variables")
+        # Retrieve the custom proxy URL from environment variables.
+        # This allows routing requests through a user-defined endpoint
+        # instead of directly to the Gemini API, e.g., "https://my-proxy.com/v1".
+        self.custom_proxy_url = os.environ.get("CUSTOM_PROXY_URL") # e.g., "https://my-proxy.com/v1"
+        
+        # Retrieve the API key for the custom proxy, if one is provided.
+        # This key will be used for authentication with the proxy service.
+        self.custom_proxy_api_key = os.environ.get("CUSTOM_PROXY_API_KEY")
+
+        # Validate the necessary API keys. The Gemini API key is mandatory
+        # only when a custom proxy is not being used. This provides flexibility
+        # for different deployment scenarios.
+        if not self.custom_proxy_url and not self.gemini_api_key:
+            raise ValueError("GEMINI_API_KEY not found in environment variables. It is required when not using a custom proxy.")
         
         self.big_model = os.environ.get("BIG_MODEL", "gemini-1.5-pro-latest")
         self.small_model = os.environ.get("SMALL_MODEL", "gemini-1.5-flash-latest")
@@ -1053,7 +1065,27 @@ async def create_message(request: MessagesRequest, raw_request: Request):
 
         # Convert request
         litellm_request = convert_anthropic_to_litellm(request)
-        litellm_request["api_key"] = config.gemini_api_key
+
+        # If a custom proxy URL is configured in the environment, all requests
+        # will be routed through this proxy. This logic modifies the LiteLLM
+        # request to ensure compatibility with OpenAI-like proxy endpoints.
+        if config.custom_proxy_url:
+            logger.debug(f"🔄 Routing request through custom proxy: {config.custom_proxy_url}")
+            # Set the API base to the custom proxy's URL.
+            litellm_request["api_base"] = config.custom_proxy_url
+            # Specify the provider as 'openai' for proxies that mimic the OpenAI API.
+            litellm_request["custom_llm_provider"] = "openai"
+            # Use the dedicated API key for the custom proxy.
+            litellm_request["api_key"] = config.custom_proxy_api_key
+            
+            # To ensure compatibility with OpenAI-compatible proxies, the 'gemini/' 
+            # prefix is stripped from the model name if it exists.
+            if "model" in litellm_request and litellm_request["model"].startswith("gemini/"):
+                litellm_request["model"] = litellm_request["model"][7:]
+        else:
+            # If no custom proxy is specified, the request proceeds using the
+            # default Gemini API key and settings.
+            litellm_request["api_key"] = config.gemini_api_key
         
         # Log request details
         num_tools = len(request.tools) if request.tools else 0
@@ -1180,6 +1212,15 @@ async def count_tokens(request: TokenCountRequest, raw_request: Request):
         
         litellm_data = convert_anthropic_to_litellm(temp_request)
         
+        # When a custom proxy is used, the token counting logic needs to adapt.
+        # This assumes the proxy is compatible with the OpenAI API, which typically
+        # uses the 'tiktoken' library for tokenization. A standard model like 'gpt-3.5-turbo'
+        # is used as a reference for the tokenizer to ensure accurate counts.
+        token_count_model = litellm_data["model"]
+        if config.custom_proxy_url:
+            logger.debug(f"Using OpenAI-compatible tokenizer for token count via proxy.")
+            token_count_model = "gpt-3.5-turbo" # Use a standard model for tiktoken
+            
         # Log request
         num_tools = len(request.tools) if request.tools else 0
         log_request_beautifully(
@@ -1191,7 +1232,7 @@ async def count_tokens(request: TokenCountRequest, raw_request: Request):
 
         # Count tokens
         token_count = litellm.token_counter(
-            model=litellm_data["model"],
+            model=token_count_model,
             messages=litellm_data["messages"],
         )
         
@@ -1233,20 +1274,39 @@ async def health_check():
 
 @app.get("/test-connection")
 async def test_connection():
-    """Test API connectivity to Gemini"""
+    """Test API connectivity to Gemini or custom proxy"""
     try:
-        # Simple test request to verify API connectivity
-        test_response = await litellm.acompletion(
-            model="gemini/gemini-1.5-flash-latest",
-            messages=[{"role": "user", "content": "Hello"}],
-            max_tokens=5,
-            api_key=config.gemini_api_key
-        )
+        # A simple test request is prepared to verify API connectivity.
+        # This dictionary holds the basic parameters for the test.
+        test_params = {
+            "model": "gemini-1.5-flash-latest",
+            "messages": [{"role": "user", "content": "Hello"}],
+            "max_tokens": 5,
+        }
+
+        # If a custom proxy is configured, the test parameters are adjusted
+        # to target the proxy endpoint instead of the default Gemini API.
+        if config.custom_proxy_url:
+            logger.debug(f"Testing connection to custom proxy: {config.custom_proxy_url}")
+            test_params["api_base"] = config.custom_proxy_url
+            test_params["custom_llm_provider"] = "openai"
+            test_params["api_key"] = config.custom_proxy_api_key
+        # If no proxy is specified, the parameters are set for a direct
+        # connection test to the Gemini API.
+        else:
+            logger.debug("Testing connection to Gemini API")
+            test_params["model"] = "gemini/gemini-1.5-flash-latest"
+            test_params["api_key"] = config.gemini_api_key
+
+        # The test completion call is executed using the configured parameters.
+        test_response = await litellm.acompletion(**test_params)
         
+        # A success message is returned, indicating which endpoint was successfully connected to,
+        # providing clear feedback on the connection status.
         return {
             "status": "success",
-            "message": "Successfully connected to Gemini API",
-            "model_used": "gemini-1.5-flash-latest",
+            "message": f"Successfully connected to {'custom proxy' if config.custom_proxy_url else 'Gemini API'}",
+            "model_used": test_params["model"],
             "timestamp": datetime.now().isoformat(),
             "response_id": getattr(test_response, 'id', 'unknown')
         }
@@ -1351,13 +1411,25 @@ def validate_startup():
     """Validate configuration and connectivity on startup"""
     print("🔍 Validating startup configuration...")
     
-    # Check API key
-    if not config.gemini_api_key:
-        print("🔴 FATAL: GEMINI_API_KEY is not set")
-        return False
-    
-    if not config.validate_api_key():
-        print("⚠️ WARNING: API key format validation failed")
+    # If a custom proxy is not being used, it's essential to validate
+    # the Gemini API key to ensure proper connectivity.
+    if not config.custom_proxy_url:
+        # A fatal error is raised if the Gemini API key is missing, as it's required
+        # for direct communication with the Gemini API.
+        if not config.gemini_api_key:
+            print("🔴 FATAL: GEMINI_API_KEY is not set and no custom proxy is configured.")
+            return False
+        
+        # A basic format validation is performed on the API key to catch common errors early.
+        # A warning is issued if the format appears incorrect.
+        if not config.validate_api_key():
+            print("⚠️ WARNING: API key format validation failed for GEMINI_API_KEY.")
+    # If a custom proxy is in use, the validation logic shifts to the proxy's API key.
+    else:
+        # A warning is displayed if the custom proxy's API key is not set,
+        # as it may be required for authentication by the proxy service.
+        if not config.custom_proxy_api_key:
+            print("⚠️ WARNING: CUSTOM_PROXY_API_KEY is not set, which may be required by your proxy.")
     
     # Check network connectivity (basic)
     try:
@@ -1414,6 +1486,9 @@ def main():
     print(f"   Force Disable Streaming: {config.force_disable_streaming}")
     print(f"   Emergency Disable Streaming: {config.emergency_disable_streaming}")
     print(f"   Log Level: {config.log_level}")
+    # In the configuration summary, explicitly state whether a custom proxy is being used.
+    # This provides clear, at-a-glance information about the routing configuration upon startup.
+    print(f"   Custom Proxy URL: {'Configured' if config.custom_proxy_url else 'Not set'}")
     print(f"   Server: {config.host}:{config.port}")
     print("")
 
